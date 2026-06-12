@@ -41,27 +41,25 @@ const formatDate = (dateString) => {
  * If the session is still open (no checkOut), we add seconds elapsed
  * since checkIn on top of any previously-recorded minutes.
  */
-const computeLiveDuration = (todayAttendance, isCheckedIn) => {
-  if (!todayAttendance) return "0h 0m 0s";
-
-  const baseMins = todayAttendance.totalDurationMinutes || 0;
-
-  if (!isCheckedIn || !todayAttendance.oldestCheckIn) {
-    // Session closed — just show the recorded total
-    const h = Math.floor(baseMins / 60);
-    const m = baseMins % 60;
-    return `${h}h ${m}m`;
+// activeCheckIn = current open session start (may differ from oldestCheckIn on re-entry)
+const computeLiveDuration = (todayAttendance, isCheckedIn, activeCheckIn) => {
+  if (!isCheckedIn) {
+    if (!todayAttendance) return "0h 0m";
+    const mins = todayAttendance.totalDurationMinutes || 0;
+    return `${Math.floor(mins / 60)}h ${mins % 60}m`;
   }
+  // Use current open session start if available, else oldest check-in
+  const checkInISO = activeCheckIn || todayAttendance?.oldestCheckIn;
+  if (!checkInISO) return "0h 0m 0s";
 
-  // Session open — add live elapsed seconds since this check-in began
-  const checkInMs = new Date(todayAttendance.oldestCheckIn).getTime();
-  const elapsedMs = Date.now() - checkInMs;
-  const totalSeconds = Math.floor(elapsedMs / 1000);
+  const elapsedSec = Math.floor((Date.now() - new Date(checkInISO).getTime()) / 1000);
+  // Add previously closed session minutes on top
+  const closedMins = todayAttendance?.totalDurationMinutes || 0;
+  const totalSec = closedMins * 60 + elapsedSec;
 
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
   return `${h}h ${m}m ${s}s`;
 };
 
@@ -76,12 +74,14 @@ export default function Attend() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [todayAttendance, setTodayAttendance] = useState(null);
+  const [activeCheckIn, setActiveCheckIn] = useState(null); // current open session start
 
   // Live duration ticker — only runs while checked in
   const [liveDuration, setLiveDuration] = useState("0h 0m 0s");
   const timerRef = useRef(null);
-  const todayRef = useRef(null);     // mirrors todayAttendance for timer closure
-  const statusRef = useRef("CHECKED_OUT"); // mirrors currentStatus
+  const todayRef = useRef(null);          // mirrors todayAttendance for timer closure
+  const statusRef = useRef("CHECKED_OUT");  // mirrors currentStatus
+  const activeCheckInRef = useRef(null);    // mirrors activeCheckIn for timer closure
 
   // Stable ref for event listener
   const refreshAttendanceDataRef = useRef(null);
@@ -90,7 +90,7 @@ export default function Attend() {
   const startTimer = useCallback(() => {
     if (timerRef.current) return; // already running
     timerRef.current = setInterval(() => {
-      setLiveDuration(computeLiveDuration(todayRef.current, true));
+      setLiveDuration(computeLiveDuration(todayRef.current, true, activeCheckInRef.current));
     }, 1000);
   }, []);
 
@@ -105,21 +105,16 @@ export default function Attend() {
   useEffect(() => {
     todayRef.current = todayAttendance;
     statusRef.current = currentStatus;
+    activeCheckInRef.current = activeCheckIn;
 
-    if (currentStatus === "CHECKED_IN" && todayAttendance?.oldestCheckIn) {
-      // Snapshot immediately so the first render isn't stale
-      setLiveDuration(computeLiveDuration(todayAttendance, true));
+    if (currentStatus === "CHECKED_IN" && (activeCheckIn || todayAttendance?.oldestCheckIn)) {
+      setLiveDuration(computeLiveDuration(todayAttendance, true, activeCheckIn));
       startTimer();
     } else {
       stopTimer();
-      // Show final recorded duration when checked out
-      if (todayAttendance) {
-        setLiveDuration(computeLiveDuration(todayAttendance, false));
-      } else {
-        setLiveDuration("0h 0m");
-      }
+      setLiveDuration(computeLiveDuration(todayAttendance, false, null));
     }
-  }, [currentStatus, todayAttendance, startTimer, stopTimer]);
+  }, [currentStatus, todayAttendance, activeCheckIn, startTimer, stopTimer]);
 
   // Cleanup timer on unmount
   useEffect(() => () => stopTimer(), [stopTimer]);
@@ -133,15 +128,41 @@ export default function Attend() {
       const employeeNumber = parsedUser.employeeNumber;
       if (!employeeNumber) return;
 
-      const [status, today, history, location] = await Promise.all([
-        attendanceService.getCurrentStatus(employeeNumber),
-        attendanceService.getTodayAttendance(employeeNumber),
+      // ── Single history fetch + location in parallel ──────────────────────
+      // We derive EVERYTHING from one history call to avoid 3 parallel fetches
+      // fighting each other and potentially setting stale state.
+      const [history, location] = await Promise.all([
         attendanceService.getAttendanceHistory(employeeNumber),
         locationService.getCurrentLocation(),
       ]);
 
+      // ── Derive today's record ────────────────────────────────────────────
+      const today = new Date().toISOString().split("T")[0];
+      const todayRecord = history.success
+        ? (history.data.find((a) => a.date === today) || null)
+        : null;
+
+      // ── Derive status from the single history fetch ─────────────────────
+      // Check TTL cache first; otherwise use the shared _deriveStatus logic
+      // so there's exactly ONE place the status rules live.
+      let status;
+      if (
+        attendanceService.statusCache !== null &&
+        Date.now() - attendanceService.statusCacheTime <
+          attendanceService.STATUS_CACHE_TTL
+      ) {
+        status = attendanceService.statusCache;
+        console.log(`[Attend] Status: ${status} (cached)`);
+      } else {
+        status = attendanceService._deriveStatus(history);
+        console.log(`[Attend] Status derived: ${status}`);
+      }
+      const openSession = attendanceService.openSessionCheckIn;
+
+      // ── Commit all state at once ─────────────────────────────────────────
       setCurrentStatus(status);
-      setTodayAttendance(today);
+      setTodayAttendance(todayRecord);
+      setActiveCheckIn(openSession);
       if (history.success) setAttendanceHistory(history.data);
       if (location) {
         setDistance(location.distance);
@@ -320,7 +341,10 @@ export default function Attend() {
             <MaterialIcons name="login" size={16} color="#6B7280" />
             <Text style={styles.sessionLabel}>Check In</Text>
             <Text style={styles.sessionValue}>
-              {formatTime(todayAttendance.oldestCheckIn)}
+              {/* When checked in after re-entry, show current session start */}
+              {isCheckedIn && activeCheckIn
+                ? formatTime(activeCheckIn)
+                : formatTime(todayAttendance.oldestCheckIn)}
             </Text>
           </View>
 
@@ -328,18 +352,20 @@ export default function Attend() {
             <MaterialIcons
               name="logout"
               size={16}
-              color={todayAttendance.latestCheckOut ? "#6B7280" : "#D1D5DB"}
+              color={isCheckedIn ? "#D1D5DB" : "#6B7280"}
             />
             <Text style={styles.sessionLabel}>Check Out</Text>
             <Text
               style={[
                 styles.sessionValue,
-                !todayAttendance.latestCheckOut && { color: "#9CA3AF" },
+                isCheckedIn && { color: "#9CA3AF" },
               ]}
             >
-              {todayAttendance.latestCheckOut
+              {isCheckedIn
+                ? "Active session"
+                : todayAttendance.latestCheckOut
                 ? formatTime(todayAttendance.latestCheckOut)
-                : "Active session"}
+                : "—"}
             </Text>
           </View>
 

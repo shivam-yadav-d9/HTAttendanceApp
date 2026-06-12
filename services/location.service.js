@@ -218,12 +218,19 @@ class LocationService {
                     );
                 }
 
-                // Wait 1.5s for backend to settle, then clear cache and refresh UI
+                // Step 1 — let the UI refresh while cache still says CHECKED_IN
+                // (openSessionCheckIn is now set inside attendanceService, so
+                //  getCurrentStatus will return CHECKED_IN even after cache clears)
                 setTimeout(() => {
                     console.log('[LocationService] Emitting ATTENDANCE_UPDATED after check-in');
-                    attendanceService.clearStatusCache();
                     eventEmitter.emit('ATTENDANCE_UPDATED');
                 }, 1500);
+
+                // Step 2 — clear the TTL-based cache AFTER the refresh has run,
+                // so future location ticks re-derive status from the API cleanly
+                setTimeout(() => {
+                    attendanceService.clearStatusCache();
+                }, 5000);
 
             } else {
                 console.error('[LocationService] Check-in failed:', result.message);
@@ -267,16 +274,17 @@ class LocationService {
                     );
                 }
 
-                // Wait 1.5s then clear cache and refresh UI.
-                // Clearing cache here is intentional: the next location update
-                // will fetch fresh status from the API. If the user re-enters
-                // the office, getCurrentStatus will return CHECKED_OUT and
-                // performCheckIn will fire again automatically.
+                // Step 1 — refresh UI while cache still says CHECKED_OUT
                 setTimeout(() => {
                     console.log('[LocationService] Emitting ATTENDANCE_UPDATED after check-out');
-                    attendanceService.clearStatusCache();
                     eventEmitter.emit('ATTENDANCE_UPDATED');
                 }, 1500);
+
+                // Step 2 — clear everything after refresh; next location tick
+                // fetches fresh status; re-entry will auto check-in again
+                setTimeout(() => {
+                    attendanceService.clearAll();
+                }, 5000);
 
             } else {
                 console.error('[LocationService] Check-out failed:', result.message);

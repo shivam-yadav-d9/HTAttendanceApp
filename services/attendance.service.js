@@ -3,21 +3,40 @@ import api from './api';
 
 class AttendanceService {
     constructor() {
-        this.statusCache = null;       // 'CHECKED_IN' | 'CHECKED_OUT'
+        this.statusCache = null;        // 'CHECKED_IN' | 'CHECKED_OUT'
         this.statusCacheTime = 0;
-        this.STATUS_CACHE_TTL = 20000; // 20 seconds
+        this.STATUS_CACHE_TTL = 30000;  // 30 seconds
+
+        // When the check-in API returns an open session (fresh or ALREADY_CHECKED_IN),
+        // we store the open session's checkIn timestamp here.
+        // getCurrentStatus uses this to override a stale aggregated history response.
+        this.openSessionCheckIn = null; // ISO string | null
     }
 
-    setStatusCache(status) {
+    setStatusCache(status, openSessionCheckIn = null) {
         this.statusCache = status;
         this.statusCacheTime = Date.now();
-        console.log(`[AttendanceService] Status cache set: ${status}`);
+        if (status === 'CHECKED_IN' && openSessionCheckIn) {
+            this.openSessionCheckIn = openSessionCheckIn;
+        } else if (status === 'CHECKED_OUT') {
+            this.openSessionCheckIn = null;
+        }
+        console.log(`[AttendanceService] Status cache set: ${status}, openSession: ${openSessionCheckIn}`);
     }
 
     clearStatusCache() {
         this.statusCache = null;
         this.statusCacheTime = 0;
+        // NOTE: intentionally keep openSessionCheckIn alive so getCurrentStatus
+        // can still use it as a fallback even after the cache TTL expires.
         console.log('[AttendanceService] Status cache cleared');
+    }
+
+    clearAll() {
+        this.statusCache = null;
+        this.statusCacheTime = 0;
+        this.openSessionCheckIn = null;
+        console.log('[AttendanceService] All cache cleared');
     }
 
     async getEmployeeId() {
@@ -38,7 +57,6 @@ class AttendanceService {
         try {
             console.log(`[AttendanceService] Checking in ${employeeNumber} at (${lat}, ${lng})`);
 
-            // FIX: API expects "lang" not "lng"
             const response = await api.post('/ontrack/attendance/check-in', {
                 employeeId: employeeNumber,
                 lat: lat.toString(),
@@ -47,9 +65,13 @@ class AttendanceService {
 
             console.log('[AttendanceService] Check-in response:', response);
 
+            const attendance = response.data?.attendance;
+            const openCheckIn = attendance?.checkIn || null;
+
             if (response.data?.action === 'ALREADY_CHECKED_IN') {
-                console.log('[AttendanceService] Already checked in');
-                this.setStatusCache('CHECKED_IN');
+                console.log('[AttendanceService] Already checked in — session is OPEN');
+                // Store the open session checkIn so getCurrentStatus can use it
+                this.setStatusCache('CHECKED_IN', openCheckIn);
                 return {
                     success: true,
                     data: response.data,
@@ -59,7 +81,7 @@ class AttendanceService {
             }
 
             if (response.success) {
-                this.setStatusCache('CHECKED_IN');
+                this.setStatusCache('CHECKED_IN', openCheckIn);
             }
 
             return {
@@ -80,7 +102,6 @@ class AttendanceService {
         try {
             console.log(`[AttendanceService] Checking out ${employeeNumber} at (${lat}, ${lng})`);
 
-            // FIX: API expects "lang" not "lng"
             const response = await api.post('/ontrack/attendance/check-out', {
                 employeeId: employeeNumber,
                 lat: lat.toString(),
@@ -90,6 +111,7 @@ class AttendanceService {
             console.log('[AttendanceService] Check-out response:', response);
 
             if (response.success) {
+                // Clear open session on checkout
                 this.setStatusCache('CHECKED_OUT');
             }
 
@@ -142,7 +164,7 @@ class AttendanceService {
 
     async getCurrentStatus(employeeNumber) {
         try {
-            // Return cached status if still fresh
+            // ── 1. Fresh TTL cache — most authoritative ──────────────────────────
             if (
                 this.statusCache !== null &&
                 (Date.now() - this.statusCacheTime) < this.STATUS_CACHE_TTL
@@ -151,37 +173,9 @@ class AttendanceService {
                 return this.statusCache;
             }
 
+            // ── 2. Fetch history ─────────────────────────────────────────────────
             const history = await this.getAttendanceHistory(employeeNumber);
-
-            if (!history.success || !history.data?.length) {
-                console.log('[AttendanceService] Status: CHECKED_OUT (no data)');
-                return 'CHECKED_OUT';
-            }
-
-            const today = new Date().toISOString().split('T')[0];
-            const todayRecord = history.data.find(item => item.date === today);
-
-            if (!todayRecord) {
-                console.log('[AttendanceService] Status: CHECKED_OUT (no today record)');
-                return 'CHECKED_OUT';
-            }
-
-            console.log('[AttendanceService] Today record:', JSON.stringify(todayRecord));
-
-            // Session is explicitly open
-            if (todayRecord.status === 'OPEN') {
-                console.log('[AttendanceService] Status: CHECKED_IN (OPEN session)');
-                return 'CHECKED_IN';
-            }
-
-            // Has check-in but no check-out in summary
-            if (todayRecord.oldestCheckIn && !todayRecord.latestCheckOut) {
-                console.log('[AttendanceService] Status: CHECKED_IN (no checkout yet)');
-                return 'CHECKED_IN';
-            }
-
-            console.log('[AttendanceService] Status: CHECKED_OUT');
-            return 'CHECKED_OUT';
+            return this._deriveStatus(history);
 
         } catch (error) {
             console.error('[AttendanceService] Get current status error:', error);
@@ -189,12 +183,62 @@ class AttendanceService {
         }
     }
 
+    // Derive status from a history response object.
+    // Shared by getCurrentStatus and attend.jsx to ensure identical logic.
+    _deriveStatus(history) {
+        if (!history.success || !history.data?.length) {
+            if (this.openSessionCheckIn) {
+                console.log('[AttendanceService] Status: CHECKED_IN (open session, no history)');
+                return 'CHECKED_IN';
+            }
+            console.log('[AttendanceService] Status: CHECKED_OUT (no data)');
+            return 'CHECKED_OUT';
+        }
+
+        const today = new Date().toISOString().split('T')[0];
+        const todayRecord = history.data.find(item => item.date === today);
+
+        if (!todayRecord) {
+            if (this.openSessionCheckIn) {
+                console.log('[AttendanceService] Status: CHECKED_IN (open session, no today record)');
+                return 'CHECKED_IN';
+            }
+            console.log('[AttendanceService] Status: CHECKED_OUT (no today record)');
+            return 'CHECKED_OUT';
+        }
+
+        console.log('[AttendanceService] Today record:', JSON.stringify(todayRecord));
+
+        // Backend marks the session explicitly OPEN
+        if (todayRecord.status === 'OPEN') {
+            console.log('[AttendanceService] Status: CHECKED_IN (OPEN)');
+            return 'CHECKED_IN';
+        }
+
+        // Re-entry: open session is newer than the last aggregated checkout
+        if (todayRecord.latestCheckOut && this.openSessionCheckIn) {
+            const coTime = new Date(todayRecord.latestCheckOut).getTime();
+            const osTime = new Date(this.openSessionCheckIn).getTime();
+            if (osTime > coTime) {
+                console.log('[AttendanceService] Status: CHECKED_IN (re-entry: openSession newer than lastCheckout)');
+                return 'CHECKED_IN';
+            }
+        }
+
+        // Has a checkIn but no checkout yet — still in office
+        if (todayRecord.oldestCheckIn && !todayRecord.latestCheckOut) {
+            console.log('[AttendanceService] Status: CHECKED_IN (no checkout yet)');
+            return 'CHECKED_IN';
+        }
+
+        console.log('[AttendanceService] Status: CHECKED_OUT');
+        return 'CHECKED_OUT';
+    }
+
     async getLastSevenDaysAttendance(employeeNumber) {
         try {
             const history = await this.getAttendanceHistory(employeeNumber);
-            if (history.success) {
-                return history.data.slice(0, 7);
-            }
+            if (history.success) return history.data.slice(0, 7);
             return [];
         } catch (error) {
             console.error('[AttendanceService] Get last 7 days error:', error);
@@ -211,15 +255,12 @@ class AttendanceService {
                 const totalDays = monthData.length;
                 const presentDays = monthData.filter(a => a.status === 'Present').length;
                 const totalDuration = monthData.reduce((sum, a) => sum + (a.totalDurationMinutes || 0), 0);
-                const totalHours = Math.floor(totalDuration / 60);
-                const totalMinutes = totalDuration % 60;
-
                 return {
                     totalDays,
                     presentDays,
                     absentDays: totalDays - presentDays,
                     attendancePercentage: totalDays > 0 ? (presentDays / totalDays) * 100 : 0,
-                    totalDuration: `${totalHours}h ${totalMinutes}m`,
+                    totalDuration: `${Math.floor(totalDuration / 60)}h ${totalDuration % 60}m`,
                     data: monthData,
                 };
             }
