@@ -149,7 +149,7 @@ export default function Attend() {
       if (
         attendanceService.statusCache !== null &&
         Date.now() - attendanceService.statusCacheTime <
-          attendanceService.STATUS_CACHE_TTL
+        attendanceService.STATUS_CACHE_TTL
       ) {
         status = attendanceService.statusCache;
         console.log(`[Attend] Status: ${status} (cached)`);
@@ -159,10 +159,40 @@ export default function Attend() {
       }
       const openSession = attendanceService.openSessionCheckIn;
 
+      // ── Staleness check: openSession must belong to TODAY. If it's from
+      // a previous day, it's a stale/orphaned OPEN session (checkout never
+      // fired) and would produce a bogus multi-day "Time in office" value.
+      const openSessionIsToday =
+        !!openSession &&
+        new Date(openSession).toISOString().split("T")[0] === today;
+
+      if (openSession && !openSessionIsToday) {
+        console.warn(
+          `[Attend] Stale openSessionCheckIn from ${openSession} — ignoring for today's card`
+        );
+      }
+
+      // ── Fallback: if checked in via TODAY's openSessionCheckIn but the
+      // history API hasn't created today's aggregate row yet, build a
+      // placeholder so the UI can still show the live session.
+      const effectiveTodayRecord =
+        todayRecord ||
+        (status === "CHECKED_IN" && openSession && openSessionIsToday
+          ? {
+            date: today,
+            oldestCheckIn: openSession,
+            latestCheckOut: null,
+            totalDurationMinutes: 0,
+            totalSessions: 1,
+            totalDurationFormatted: "0h 0m",
+            status: "OPEN",
+          }
+          : null);
+
       // ── Commit all state at once ─────────────────────────────────────────
       setCurrentStatus(status);
-      setTodayAttendance(todayRecord);
-      setActiveCheckIn(openSession);
+      setTodayAttendance(effectiveTodayRecord);
+      setActiveCheckIn(openSessionIsToday ? openSession : null);
       if (history.success) setAttendanceHistory(history.data);
       if (location) {
         setDistance(location.distance);
@@ -178,10 +208,18 @@ export default function Attend() {
   }, [refreshAttendanceData]);
 
   // ── init ─────────────────────────────────────────────────────────────────
+  // ── init ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     const handleAttendanceUpdate = () => {
       console.log("[Attend] ATTENDANCE_UPDATED received");
       refreshAttendanceDataRef.current?.();
+    };
+
+    // Lightweight live update — fires on every GPS tick, just updates the
+    // distance/inside-office stat card without hitting the history API.
+    const handleLocationUpdate = (data) => {
+      setDistance(data.distance);
+      setIsInsideOffice(data.isInside);
     };
 
     const init = async () => {
@@ -204,13 +242,14 @@ export default function Attend() {
         setLoading(false);
       }
     };
-
     eventEmitter.on("ATTENDANCE_UPDATED", handleAttendanceUpdate);
+    eventEmitter.on("LOCATION_UPDATED", handleLocationUpdate);
     init();
 
     return () => {
       locationService.stopTracking();
       eventEmitter.off("ATTENDANCE_UPDATED", handleAttendanceUpdate);
+      eventEmitter.off("LOCATION_UPDATED", handleLocationUpdate);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -231,10 +270,10 @@ export default function Attend() {
   const todayDisplayStatus = isCheckedIn
     ? "Present"
     : todayAttendance?.latestCheckOut
-    ? "Present"
-    : todayAttendance?.oldestCheckIn
-    ? "Present"  // has a record but no checkout yet — still present
-    : todayAttendance?.status || "Absent";
+      ? "Present"
+      : todayAttendance?.oldestCheckIn
+        ? "Present"  // has a record but no checkout yet — still present
+        : todayAttendance?.status || "Absent";
 
   // ── render ───────────────────────────────────────────────────────────────
   if (loading) {
@@ -260,9 +299,7 @@ export default function Attend() {
         <Text style={styles.headerSubtitle}>
           Track attendance and office status
         </Text>
-        <Text style={styles.userName}>
-          {user?.name} • {user?.employeeNumber}
-        </Text>
+
       </View>
 
       {/* ── Stats Row ──────────────────────────────────────────────── */}
@@ -364,8 +401,8 @@ export default function Attend() {
               {isCheckedIn
                 ? "Active session"
                 : todayAttendance.latestCheckOut
-                ? formatTime(todayAttendance.latestCheckOut)
-                : "—"}
+                  ? formatTime(todayAttendance.latestCheckOut)
+                  : "—"}
             </Text>
           </View>
 
@@ -482,7 +519,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#F5F7FA",
   },
   header: {
-    backgroundColor: "#5C2D0C",
+    backgroundColor: "#0B2D52",
     paddingTop: 60,
     paddingHorizontal: 20,
     paddingBottom: 20,
@@ -501,13 +538,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     paddingHorizontal: 20,
-    marginTop: -25,
+    marginTop: -10,
   },
   statCard: {
     backgroundColor: "#fff",
     flex: 1,
     marginHorizontal: 5,
-    padding: 15,
+    padding: 10,
     borderRadius: 12,
     alignItems: "center",
     elevation: 3,
@@ -518,7 +555,7 @@ const styles = StyleSheet.create({
   },
   statLabel: { fontSize: 12, color: "#6B7280", marginTop: 8 },
   statValue: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "bold",
     marginTop: 4,
     textAlign: "center",
@@ -529,7 +566,7 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#111827",
     marginHorizontal: 20,
-    marginTop: 20,
+    marginTop: 10,
     marginBottom: 10,
   },
 
@@ -538,7 +575,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     marginBottom: 15,
     borderRadius: 12,
-    padding: 16,
+    padding: 10,
     elevation: 2,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },

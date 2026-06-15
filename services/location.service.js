@@ -16,11 +16,17 @@ class LocationService {
         this.lastCheckInTime = 0;
         this.lastCheckOutTime = 0;
         // Cooldowns prevent duplicate API calls for the same transition
+        // Cooldowns prevent duplicate API calls for the same transition
         this.CHECK_IN_COOLDOWN = 30000;   // 30 seconds
         this.CHECK_OUT_COOLDOWN = 30000;  // 30 seconds
+        this.STALE_RECOVERY_COOLDOWN = 30000; // 30 seconds
+        this.lastStaleRecoveryTime = 0;
         // Track last known inside/outside state to detect transitions
         // null = unknown (first run), true = was inside, false = was outside
         this.wasInsideOffice = null;
+
+        // Timer that fires at local midnight to roll the day over
+        this.midnightTimeout = null;
     }
 
     async startTracking() {
@@ -61,19 +67,21 @@ class LocationService {
             this.locationSubscription = await Location.watchPositionAsync(
                 {
                     accuracy: Location.Accuracy.High,
-                    timeInterval: 10000,  // Every 10 seconds
-                    distanceInterval: 15, // Or every 15 meters moved
+                    timeInterval: 1000,  // Every 10 seconds
+                    distanceInterval: 1, // Or every 15 meters moved
                 },
                 this.handleLocationUpdate.bind(this)
             );
 
             this.isTracking = true;
             console.log('[LocationService] Tracking started');
-
             this.appStateSubscription = AppState.addEventListener(
                 'change',
                 this.handleAppStateChange.bind(this)
             );
+
+            // Close out today's session and open tomorrow's, right at midnight.
+            this.scheduleMidnightRollover();
 
             // Kick off an immediate location check
             await this.getCurrentLocation();
@@ -116,6 +124,17 @@ class LocationService {
             const isInsideOffice = distance <= MAX_DISTANCE;
             const now = Date.now();
 
+            // Push live distance/inside-office info to the UI immediately —
+            // don't wait on the attendance status fetch below, so the
+            // "Distance" card updates on every GPS tick in real time.
+            eventEmitter.emit('LOCATION_UPDATED', {
+                distance: Math.round(distance),
+                isInside: isInsideOffice,
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+                timestamp: new Date().toISOString(),
+            });
+
             // Get current attendance status (uses cache when available)
             const currentStatus = await attendanceService.getCurrentStatus(employeeNumber);
             const isCheckedIn = currentStatus === 'CHECKED_IN';
@@ -124,6 +143,51 @@ class LocationService {
                 `[LocationService] distance=${Math.round(distance)}m, inside=${isInsideOffice}, ` +
                 `checkedIn=${isCheckedIn}, wasInside=${this.wasInsideOffice}`
             );
+
+            // ── STALE SESSION RECOVERY ────────────────────────────────────────────
+            // "Checked in" via an open session from a PREVIOUS day — backend never
+            // closed it (background tracking probably got killed before auto-checkout
+            // fired). Close it out, then immediately re-check-in so today's attendance
+            // starts a fresh, correctly-dated session.
+            if (
+                isCheckedIn &&
+                attendanceService.isOpenSessionStale() &&
+                (now - this.lastStaleRecoveryTime) > this.STALE_RECOVERY_COOLDOWN
+            ) {
+                console.log('[LocationService] Stale open session detected — recovering...');
+                this.lastStaleRecoveryTime = now;
+
+                await attendanceService.checkOut(
+                    employeeNumber,
+                    location.coords.latitude,
+                    location.coords.longitude
+                );
+
+                if (isInsideOffice) {
+                    this.lastCheckInTime = now;
+                    this.wasInsideOffice = true;
+                    await this.performCheckIn(
+                        employeeNumber,
+                        location.coords.latitude,
+                        location.coords.longitude
+                    );
+                } else {
+                    this.wasInsideOffice = false;
+                }
+
+                await AsyncStorage.setItem('lastLocation', JSON.stringify({
+                    latitude: location.coords.latitude,
+                    longitude: location.coords.longitude,
+                    distance: Math.round(distance),
+                    isInside: isInsideOffice,
+                    timestamp: new Date().toISOString(),
+                }));
+
+                this.retryCount = 0;
+                return;
+            }
+
+            // ── AUTO CHECK-IN ──────────────────────────────────────────────────────
 
             // ── AUTO CHECK-IN ──────────────────────────────────────────────────────
             // Trigger when:
@@ -315,7 +379,6 @@ class LocationService {
 
         this.appState = nextAppState;
     }
-
     stopTracking() {
         if (this.locationSubscription) {
             this.locationSubscription.remove();
@@ -325,6 +388,71 @@ class LocationService {
         }
         if (this.appStateSubscription) {
             this.appStateSubscription.remove();
+        }
+        if (this.midnightTimeout) {
+            clearTimeout(this.midnightTimeout);
+            this.midnightTimeout = null;
+        }
+    }
+
+    // ── Midnight rollover ───────────────────────────────────────────────────
+    // At local midnight, close out any still-open session (so a single shift
+    // never bleeds into the next day) and, if the user is still inside the
+    // office, immediately open a fresh session for the new day.
+    scheduleMidnightRollover() {
+        if (this.midnightTimeout) {
+            clearTimeout(this.midnightTimeout);
+        }
+
+        const now = new Date();
+        const nextMidnight = new Date(now);
+        nextMidnight.setHours(24, 0, 5, 0); // 00:00:05 tomorrow — small buffer past midnight
+        const msUntilMidnight = nextMidnight.getTime() - now.getTime();
+
+        console.log(`[LocationService] Midnight rollover scheduled in ${Math.round(msUntilMidnight / 1000)}s`);
+
+        this.midnightTimeout = setTimeout(() => {
+            this.handleMidnightRollover();
+        }, msUntilMidnight);
+    }
+
+    async handleMidnightRollover() {
+        try {
+            console.log('[LocationService] Midnight rollover triggered');
+
+            const userData = await AsyncStorage.getItem('userData');
+            if (!userData) return;
+
+            const user = JSON.parse(userData);
+            const employeeNumber = user.employeeNumber;
+            if (!employeeNumber) return;
+
+            const currentStatus = await attendanceService.getCurrentStatus(employeeNumber);
+
+            if (currentStatus === 'CHECKED_IN') {
+                const location = await this.getCurrentLocation();
+                const lat = location?.latitude ?? OFFICE_LOCATION.latitude;
+                const lng = location?.longitude ?? OFFICE_LOCATION.longitude;
+
+                console.log("[LocationService] Closing yesterday's session at midnight");
+                await attendanceService.checkOut(employeeNumber, lat, lng);
+
+                if (location?.isInside) {
+                    console.log("[LocationService] Still inside office — starting today's session");
+                    this.lastCheckInTime = Date.now();
+                    this.wasInsideOffice = true;
+                    await this.performCheckIn(employeeNumber, lat, lng);
+                } else {
+                    attendanceService.clearAll();
+                    this.wasInsideOffice = false;
+                    eventEmitter.emit('ATTENDANCE_UPDATED');
+                }
+            }
+        } catch (error) {
+            console.error('[LocationService] Midnight rollover error:', error);
+        } finally {
+            // Always reschedule for the next midnight, win or lose
+            this.scheduleMidnightRollover();
         }
     }
 

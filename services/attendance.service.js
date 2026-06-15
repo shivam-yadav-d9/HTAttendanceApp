@@ -39,6 +39,15 @@ class AttendanceService {
         console.log('[AttendanceService] All cache cleared');
     }
 
+    // True if there's an open session whose check-in date is NOT today —
+    // i.e. a session the backend never closed (orphaned across a day boundary).
+    isOpenSessionStale() {
+        if (!this.openSessionCheckIn) return false;
+        const today = new Date().toISOString().split('T')[0];
+        const sessionDate = new Date(this.openSessionCheckIn).toISOString().split('T')[0];
+        return sessionDate !== today;
+    }
+
     async getEmployeeId() {
         try {
             const userData = await AsyncStorage.getItem('userData');
