@@ -9,12 +9,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  View,
+  View
 } from "react-native";
 import attendanceService from "../../services/attendance.service";
 import eventEmitter from "../../services/eventEmitter";
@@ -40,7 +39,6 @@ const formatDate = (dateString) => {
   });
 };
 
-// activeCheckIn = current open session start (may differ from oldestCheckIn on re-entry)
 const computeLiveDuration = (todayAttendance, isCheckedIn, activeCheckIn) => {
   if (!isCheckedIn) {
     if (!todayAttendance) return "0h 0m";
@@ -70,7 +68,8 @@ export default function Attend() {
   const [isInsideOffice, setIsInsideOffice] = useState(false);
   const [currentStatus, setCurrentStatus] = useState("CHECKED_OUT");
   const [attendanceHistory, setAttendanceHistory] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // ✅ FIX: Start with loading=false so cached data shows immediately
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [todayAttendance, setTodayAttendance] = useState(null);
   const [activeCheckIn, setActiveCheckIn] = useState(null);
@@ -118,7 +117,48 @@ export default function Attend() {
 
   useEffect(() => () => stopTimer(), [stopTimer]);
 
-  // ── fetch attendance ─────────────────────────────────────────────────────
+  // ── STEP 1: Load from in-memory cache instantly (no API call) ────────────
+  const loadFromCache = useCallback(async () => {
+    try {
+      // Use whatever attendanceService already has in memory
+      const cachedStatus = attendanceService.statusCache;
+      const cachedOpenSession = attendanceService.openSessionCheckIn;
+
+      if (cachedStatus) {
+        setCurrentStatus(cachedStatus);
+      }
+
+      if (cachedOpenSession) {
+        setActiveCheckIn(cachedOpenSession);
+        const today = new Date().toISOString().split("T")[0];
+        const isToday =
+          new Date(cachedOpenSession).toISOString().split("T")[0] === today;
+        if (isToday && cachedStatus === "CHECKED_IN") {
+          setTodayAttendance({
+            date: today,
+            oldestCheckIn: cachedOpenSession,
+            latestCheckOut: null,
+            totalDurationMinutes: 0,
+            totalSessions: 1,
+            totalDurationFormatted: "0h 0m",
+            status: "OPEN",
+          });
+        }
+      }
+
+      // Also load last known location from AsyncStorage (instant, no GPS call)
+      const lastLocRaw = await AsyncStorage.getItem("lastLocation");
+      if (lastLocRaw) {
+        const lastLoc = JSON.parse(lastLocRaw);
+        setDistance(lastLoc.distance || 0);
+        setIsInsideOffice(lastLoc.isInside || false);
+      }
+    } catch (e) {
+      console.log("[Attend] Cache load error (non-fatal):", e);
+    }
+  }, []);
+
+  // ── STEP 2: Fetch fresh data from API in background ──────────────────────
   const refreshAttendanceData = useCallback(async () => {
     try {
       const userData = await AsyncStorage.getItem("userData");
@@ -127,9 +167,9 @@ export default function Attend() {
       const employeeNumber = parsedUser.employeeNumber;
       if (!employeeNumber) return;
 
-      const [history, location] = await Promise.all([
+      // ✅ FIX: Run history fetch and location in parallel, don't await GPS
+      const [history] = await Promise.all([
         attendanceService.getAttendanceHistory(employeeNumber),
-        locationService.getCurrentLocation(),
       ]);
 
       const today = new Date().toISOString().split("T")[0];
@@ -171,10 +211,15 @@ export default function Attend() {
       setTodayAttendance(effectiveTodayRecord);
       setActiveCheckIn(openSessionIsToday ? openSession : null);
       if (history.success) setAttendanceHistory(history.data);
-      if (location) {
-        setDistance(location.distance);
-        setIsInsideOffice(location.isInside);
-      }
+
+      // ✅ FIX: Fetch GPS location separately AFTER UI is updated
+      //    so it doesn't block the history from rendering
+      locationService.getCurrentLocation().then((location) => {
+        if (location) {
+          setDistance(location.distance);
+          setIsInsideOffice(location.isInside);
+        }
+      });
     } catch (error) {
       console.error("[Attend] Error refreshing:", error);
     }
@@ -184,7 +229,7 @@ export default function Attend() {
     refreshAttendanceDataRef.current = refreshAttendanceData;
   }, [refreshAttendanceData]);
 
-  // ── init — ONLY sets up listeners, does NOT own tracking ─────────────────
+  // ── init ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     const handleAttendanceUpdate = () => {
       console.log("[Attend] ATTENDANCE_UPDATED received");
@@ -204,20 +249,14 @@ export default function Attend() {
           return;
         }
         setUser(JSON.parse(userData));
-        await refreshAttendanceData();
 
-        // Read last known location from cache for immediate display
-        // (the watcher in _layout.jsx will keep updating via LOCATION_UPDATED)
-        const location = await locationService.getCurrentLocation();
-        if (location) {
-          setDistance(location.distance);
-          setIsInsideOffice(location.isInside);
-        }
+        // ✅ FIX: Show cached data FIRST (instant), then fetch fresh in background
+        await loadFromCache();           // ~0ms — reads memory + AsyncStorage
+        refreshAttendanceData();         // non-blocking — updates UI when ready
       } catch (error) {
         console.error("[Attend] Init error:", error);
-      } finally {
-        setLoading(false);
       }
+      // ✅ FIX: No setLoading(false) needed — loading starts as false
     };
 
     eventEmitter.on("ATTENDANCE_UPDATED", handleAttendanceUpdate);
@@ -225,8 +264,6 @@ export default function Attend() {
     init();
 
     return () => {
-      // ✅ Only remove listeners — do NOT stop tracking here.
-      // Tracking is owned by _layout.jsx and must survive tab switches.
       eventEmitter.off("ATTENDANCE_UPDATED", handleAttendanceUpdate);
       eventEmitter.off("LOCATION_UPDATED", handleLocationUpdate);
     };
@@ -253,13 +290,8 @@ export default function Attend() {
     : todayAttendance?.status || "Absent";
 
   // ── render ───────────────────────────────────────────────────────────────
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#D96A17" />
-      </View>
-    );
-  }
+  // ✅ FIX: Removed loading spinner entirely — skeleton/cache shows instantly.
+  //    Pull-to-refresh handles manual reloads.
 
   return (
     <ScrollView
@@ -320,7 +352,9 @@ export default function Attend() {
                 { backgroundColor: isCheckedIn ? "#D1FAE5" : "#FEE2E2" },
               ]}
             >
-              <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+              <View
+                style={[styles.statusDot, { backgroundColor: statusColor }]}
+              />
               <Text style={[styles.statusPillText, { color: statusColor }]}>
                 {statusLabel}
               </Text>
@@ -355,7 +389,10 @@ export default function Attend() {
             />
             <Text style={styles.sessionLabel}>Check Out</Text>
             <Text
-              style={[styles.sessionValue, isCheckedIn && { color: "#9CA3AF" }]}
+              style={[
+                styles.sessionValue,
+                isCheckedIn && { color: "#9CA3AF" },
+              ]}
             >
               {isCheckedIn
                 ? "Active session"
@@ -380,7 +417,8 @@ export default function Attend() {
               style={[
                 styles.sessionValue,
                 {
-                  color: todayDisplayStatus === "Present" ? "#10B981" : "#EF4444",
+                  color:
+                    todayDisplayStatus === "Present" ? "#10B981" : "#EF4444",
                   fontWeight: "600",
                 },
               ]}
@@ -483,7 +521,12 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     fontSize: 12,
   },
-  headerTitle: { color: "#fff", fontSize: 28, fontWeight: "bold", marginTop: 8 },
+  headerTitle: {
+    color: "#fff",
+    fontSize: 28,
+    fontWeight: "bold",
+    marginTop: 8,
+  },
   headerSubtitle: { color: "#D1D5DB", fontSize: 14, marginTop: 4 },
 
   statsRow: {
@@ -506,7 +549,12 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   statLabel: { fontSize: 12, color: "#6B7280", marginTop: 8 },
-  statValue: { fontSize: 13, fontWeight: "bold", marginTop: 4, textAlign: "center" },
+  statValue: {
+    fontSize: 13,
+    fontWeight: "bold",
+    marginTop: 4,
+    textAlign: "center",
+  },
 
   sectionTitle: {
     fontSize: 20,
@@ -583,7 +631,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     elevation: 2,
   },
-  emptyText: { fontSize: 15, fontWeight: "600", color: "#6B7280", marginTop: 12 },
+  emptyText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#6B7280",
+    marginTop: 12,
+  },
   emptySubText: {
     fontSize: 13,
     color: "#9CA3AF",

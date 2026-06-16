@@ -26,7 +26,7 @@ class LocationService {
         this.isProcessing = false;
         this.lastCheckInTime = 0;
         this.lastCheckOutTime = 0;
-        this.CHECK_IN_COOLDOWN  = 30_000;  // 30 s
+        this.CHECK_IN_COOLDOWN = 30_000;  // 30 s
         this.CHECK_OUT_COOLDOWN = 30_000;  // 30 s
         this.STALE_RECOVERY_COOLDOWN = 30_000;
         this.lastStaleRecoveryTime = 0;
@@ -128,11 +128,12 @@ class LocationService {
             if (!permOk) return false;
 
             // ── Foreground watcher ───────────────────────────────────────────
+            // AFTER
             this.locationSubscription = await Location.watchPositionAsync(
                 {
-                    accuracy: Location.Accuracy.High,
-                    timeInterval: 10_000,  // every 10 s
-                    distanceInterval: 15,  // or every 15 m
+                    accuracy: Location.Accuracy.BestForNavigation,
+                    timeInterval: 500,    // 0.5s — near-instant
+                    distanceInterval: 1,  // 1 meter moved = update
                 },
                 this.handleLocationUpdate.bind(this)
             );
@@ -164,6 +165,26 @@ class LocationService {
     // ── Foreground location handler ──────────────────────────────────────────
 
     async handleLocationUpdate(location) {
+        // ✅ Always runs — never blocked by isProcessing
+        const distance = calculateDistance(
+            location.coords.latitude,
+            location.coords.longitude,
+            OFFICE_LOCATION.latitude,
+            OFFICE_LOCATION.longitude
+        );
+        const isInsideOffice = distance <= MAX_DISTANCE;
+
+        eventEmitter.emit('LOCATION_UPDATED', {
+            distance: Math.round(distance),
+            isInside: isInsideOffice,
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            timestamp: new Date().toISOString(),
+        });
+
+        await this._saveLastLocation(location.coords, distance, isInsideOffice);
+
+        // ✅ Guard only blocks check-in/out logic, NOT the UI update above
         if (this.isProcessing) return;
 
         try {
@@ -180,24 +201,7 @@ class LocationService {
             const employeeNumber = user.employeeNumber;
             if (!employeeNumber) return;
 
-            const distance = calculateDistance(
-                location.coords.latitude,
-                location.coords.longitude,
-                OFFICE_LOCATION.latitude,
-                OFFICE_LOCATION.longitude
-            );
-
-            const isInsideOffice = distance <= MAX_DISTANCE;
             const now = Date.now();
-
-            // Push live distance/inside-office info to the UI immediately
-            eventEmitter.emit('LOCATION_UPDATED', {
-                distance: Math.round(distance),
-                isInside: isInsideOffice,
-                latitude: location.coords.latitude,
-                longitude: location.coords.longitude,
-                timestamp: new Date().toISOString(),
-            });
 
             // Get current attendance status (uses cache when available)
             const currentStatus = await attendanceService.getCurrentStatus(employeeNumber);
@@ -235,13 +239,11 @@ class LocationService {
                     this.wasInsideOffice = false;
                 }
 
-                await this._saveLastLocation(location.coords, distance, isInsideOffice);
                 this.retryCount = 0;
                 return;
             }
 
             // ── AUTO CHECK-IN ─────────────────────────────────────────────────
-            // Fires on first entry AND on every re-entry after a checkout.
             if (
                 isInsideOffice &&
                 !isCheckedIn &&
@@ -274,7 +276,7 @@ class LocationService {
                 this.wasInsideOffice = isInsideOffice;
             }
 
-            await this._saveLastLocation(location.coords, distance, isInsideOffice);
+            // ✅ REMOVED: duplicate emit + saveLastLocation (already done above)
             this.retryCount = 0;
 
         } catch (error) {
@@ -487,7 +489,7 @@ class LocationService {
             if (status !== 'granted') return null;
 
             const location = await Location.getCurrentPositionAsync({
-                accuracy: Location.Accuracy.High,
+                accuracy: Location.Accuracy.Balanced,
             });
 
             const distance = calculateDistance(
