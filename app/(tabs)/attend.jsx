@@ -1,3 +1,9 @@
+// app/(tabs)/attend.jsx
+//
+// ⚠️  This screen does NOT own tracking — _layout.jsx does.
+//     attend.jsx only LISTENS to events and reads data.
+//     Never call locationService.startTracking() or stopTracking() here.
+
 import { MaterialIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
@@ -34,13 +40,6 @@ const formatDate = (dateString) => {
   });
 };
 
-/**
- * Given a checkIn ISO string and optional accumulated minutes from
- * previous sessions, compute the total elapsed duration string.
- *
- * If the session is still open (no checkOut), we add seconds elapsed
- * since checkIn on top of any previously-recorded minutes.
- */
 // activeCheckIn = current open session start (may differ from oldestCheckIn on re-entry)
 const computeLiveDuration = (todayAttendance, isCheckedIn, activeCheckIn) => {
   if (!isCheckedIn) {
@@ -48,12 +47,12 @@ const computeLiveDuration = (todayAttendance, isCheckedIn, activeCheckIn) => {
     const mins = todayAttendance.totalDurationMinutes || 0;
     return `${Math.floor(mins / 60)}h ${mins % 60}m`;
   }
-  // Use current open session start if available, else oldest check-in
   const checkInISO = activeCheckIn || todayAttendance?.oldestCheckIn;
   if (!checkInISO) return "0h 0m 0s";
 
-  const elapsedSec = Math.floor((Date.now() - new Date(checkInISO).getTime()) / 1000);
-  // Add previously closed session minutes on top
+  const elapsedSec = Math.floor(
+    (Date.now() - new Date(checkInISO).getTime()) / 1000
+  );
   const closedMins = todayAttendance?.totalDurationMinutes || 0;
   const totalSec = closedMins * 60 + elapsedSec;
 
@@ -74,23 +73,21 @@ export default function Attend() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [todayAttendance, setTodayAttendance] = useState(null);
-  const [activeCheckIn, setActiveCheckIn] = useState(null); // current open session start
+  const [activeCheckIn, setActiveCheckIn] = useState(null);
 
-  // Live duration ticker — only runs while checked in
   const [liveDuration, setLiveDuration] = useState("0h 0m 0s");
   const timerRef = useRef(null);
-  const todayRef = useRef(null);          // mirrors todayAttendance for timer closure
-  const statusRef = useRef("CHECKED_OUT");  // mirrors currentStatus
-  const activeCheckInRef = useRef(null);    // mirrors activeCheckIn for timer closure
-
-  // Stable ref for event listener
+  const todayRef = useRef(null);
+  const activeCheckInRef = useRef(null);
   const refreshAttendanceDataRef = useRef(null);
 
-  // ── start / stop the live timer ──────────────────────────────────────────
+  // ── timer ────────────────────────────────────────────────────────────────
   const startTimer = useCallback(() => {
-    if (timerRef.current) return; // already running
+    if (timerRef.current) return;
     timerRef.current = setInterval(() => {
-      setLiveDuration(computeLiveDuration(todayRef.current, true, activeCheckInRef.current));
+      setLiveDuration(
+        computeLiveDuration(todayRef.current, true, activeCheckInRef.current)
+      );
     }, 1000);
   }, []);
 
@@ -101,14 +98,17 @@ export default function Attend() {
     }
   }, []);
 
-  // ── sync refs and manage timer on state changes ──────────────────────────
   useEffect(() => {
     todayRef.current = todayAttendance;
-    statusRef.current = currentStatus;
     activeCheckInRef.current = activeCheckIn;
 
-    if (currentStatus === "CHECKED_IN" && (activeCheckIn || todayAttendance?.oldestCheckIn)) {
-      setLiveDuration(computeLiveDuration(todayAttendance, true, activeCheckIn));
+    if (
+      currentStatus === "CHECKED_IN" &&
+      (activeCheckIn || todayAttendance?.oldestCheckIn)
+    ) {
+      setLiveDuration(
+        computeLiveDuration(todayAttendance, true, activeCheckIn)
+      );
       startTimer();
     } else {
       stopTimer();
@@ -116,10 +116,9 @@ export default function Attend() {
     }
   }, [currentStatus, todayAttendance, activeCheckIn, startTimer, stopTimer]);
 
-  // Cleanup timer on unmount
   useEffect(() => () => stopTimer(), [stopTimer]);
 
-  // ── fetch / refresh attendance data ─────────────────────────────────────
+  // ── fetch attendance ─────────────────────────────────────────────────────
   const refreshAttendanceData = useCallback(async () => {
     try {
       const userData = await AsyncStorage.getItem("userData");
@@ -128,68 +127,46 @@ export default function Attend() {
       const employeeNumber = parsedUser.employeeNumber;
       if (!employeeNumber) return;
 
-      // ── Single history fetch + location in parallel ──────────────────────
-      // We derive EVERYTHING from one history call to avoid 3 parallel fetches
-      // fighting each other and potentially setting stale state.
       const [history, location] = await Promise.all([
         attendanceService.getAttendanceHistory(employeeNumber),
         locationService.getCurrentLocation(),
       ]);
 
-      // ── Derive today's record ────────────────────────────────────────────
       const today = new Date().toISOString().split("T")[0];
       const todayRecord = history.success
-        ? (history.data.find((a) => a.date === today) || null)
+        ? history.data.find((a) => a.date === today) || null
         : null;
 
-      // ── Derive status from the single history fetch ─────────────────────
-      // Check TTL cache first; otherwise use the shared _deriveStatus logic
-      // so there's exactly ONE place the status rules live.
       let status;
       if (
         attendanceService.statusCache !== null &&
         Date.now() - attendanceService.statusCacheTime <
-        attendanceService.STATUS_CACHE_TTL
+          attendanceService.STATUS_CACHE_TTL
       ) {
         status = attendanceService.statusCache;
-        console.log(`[Attend] Status: ${status} (cached)`);
       } else {
         status = attendanceService._deriveStatus(history);
-        console.log(`[Attend] Status derived: ${status}`);
       }
-      const openSession = attendanceService.openSessionCheckIn;
 
-      // ── Staleness check: openSession must belong to TODAY. If it's from
-      // a previous day, it's a stale/orphaned OPEN session (checkout never
-      // fired) and would produce a bogus multi-day "Time in office" value.
+      const openSession = attendanceService.openSessionCheckIn;
       const openSessionIsToday =
         !!openSession &&
         new Date(openSession).toISOString().split("T")[0] === today;
 
-      if (openSession && !openSessionIsToday) {
-        console.warn(
-          `[Attend] Stale openSessionCheckIn from ${openSession} — ignoring for today's card`
-        );
-      }
-
-      // ── Fallback: if checked in via TODAY's openSessionCheckIn but the
-      // history API hasn't created today's aggregate row yet, build a
-      // placeholder so the UI can still show the live session.
       const effectiveTodayRecord =
         todayRecord ||
         (status === "CHECKED_IN" && openSession && openSessionIsToday
           ? {
-            date: today,
-            oldestCheckIn: openSession,
-            latestCheckOut: null,
-            totalDurationMinutes: 0,
-            totalSessions: 1,
-            totalDurationFormatted: "0h 0m",
-            status: "OPEN",
-          }
+              date: today,
+              oldestCheckIn: openSession,
+              latestCheckOut: null,
+              totalDurationMinutes: 0,
+              totalSessions: 1,
+              totalDurationFormatted: "0h 0m",
+              status: "OPEN",
+            }
           : null);
 
-      // ── Commit all state at once ─────────────────────────────────────────
       setCurrentStatus(status);
       setTodayAttendance(effectiveTodayRecord);
       setActiveCheckIn(openSessionIsToday ? openSession : null);
@@ -199,7 +176,7 @@ export default function Attend() {
         setIsInsideOffice(location.isInside);
       }
     } catch (error) {
-      console.error("[Attend] Error refreshing attendance:", error);
+      console.error("[Attend] Error refreshing:", error);
     }
   }, []);
 
@@ -207,16 +184,13 @@ export default function Attend() {
     refreshAttendanceDataRef.current = refreshAttendanceData;
   }, [refreshAttendanceData]);
 
-  // ── init ─────────────────────────────────────────────────────────────────
-  // ── init ─────────────────────────────────────────────────────────────────
+  // ── init — ONLY sets up listeners, does NOT own tracking ─────────────────
   useEffect(() => {
     const handleAttendanceUpdate = () => {
       console.log("[Attend] ATTENDANCE_UPDATED received");
       refreshAttendanceDataRef.current?.();
     };
 
-    // Lightweight live update — fires on every GPS tick, just updates the
-    // distance/inside-office stat card without hitting the history API.
     const handleLocationUpdate = (data) => {
       setDistance(data.distance);
       setIsInsideOffice(data.isInside);
@@ -225,12 +199,15 @@ export default function Attend() {
     const init = async () => {
       try {
         const userData = await AsyncStorage.getItem("userData");
-        if (!userData) { router.replace("/"); return; }
+        if (!userData) {
+          router.replace("/");
+          return;
+        }
         setUser(JSON.parse(userData));
-
         await refreshAttendanceData();
-        await locationService.startTracking();
 
+        // Read last known location from cache for immediate display
+        // (the watcher in _layout.jsx will keep updating via LOCATION_UPDATED)
         const location = await locationService.getCurrentLocation();
         if (location) {
           setDistance(location.distance);
@@ -242,12 +219,14 @@ export default function Attend() {
         setLoading(false);
       }
     };
+
     eventEmitter.on("ATTENDANCE_UPDATED", handleAttendanceUpdate);
     eventEmitter.on("LOCATION_UPDATED", handleLocationUpdate);
     init();
 
     return () => {
-      locationService.stopTracking();
+      // ✅ Only remove listeners — do NOT stop tracking here.
+      // Tracking is owned by _layout.jsx and must survive tab switches.
       eventEmitter.off("ATTENDANCE_UPDATED", handleAttendanceUpdate);
       eventEmitter.off("LOCATION_UPDATED", handleLocationUpdate);
     };
@@ -260,20 +239,18 @@ export default function Attend() {
     setRefreshing(false);
   }, [refreshAttendanceData]);
 
-  // ── derived display values ───────────────────────────────────────────────
+  // ── derived ──────────────────────────────────────────────────────────────
   const isCheckedIn = currentStatus === "CHECKED_IN";
   const statusColor = isCheckedIn ? "#10B981" : "#EF4444";
   const statusLabel = isCheckedIn ? "Checked In" : "Not In";
 
-  // The backend sends "Absent" when duration = 0 (session still open).
-  // Override: if we know the user is checked in, always show "Present".
   const todayDisplayStatus = isCheckedIn
     ? "Present"
     : todayAttendance?.latestCheckOut
-      ? "Present"
-      : todayAttendance?.oldestCheckIn
-        ? "Present"  // has a record but no checkout yet — still present
-        : todayAttendance?.status || "Absent";
+    ? "Present"
+    : todayAttendance?.oldestCheckIn
+    ? "Present"
+    : todayAttendance?.status || "Absent";
 
   // ── render ───────────────────────────────────────────────────────────────
   if (loading) {
@@ -292,17 +269,14 @@ export default function Attend() {
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
       }
     >
-      {/* ── Header ─────────────────────────────────────────────────── */}
       <View style={styles.header}>
         <Text style={styles.headerTag}>ATTENDANCE HUB</Text>
         <Text style={styles.headerTitle}>My Dashboard</Text>
         <Text style={styles.headerSubtitle}>
           Track attendance and office status
         </Text>
-
       </View>
 
-      {/* ── Stats Row ──────────────────────────────────────────────── */}
       <View style={styles.statsRow}>
         <View style={styles.statCard}>
           <MaterialIcons name="access-time" size={24} color="#D96A17" />
@@ -332,12 +306,10 @@ export default function Attend() {
         </View>
       </View>
 
-      {/* ── Today's Session ────────────────────────────────────────── */}
       <Text style={styles.sectionTitle}>Today's Session</Text>
 
       {todayAttendance ? (
         <View style={styles.sessionCard}>
-          {/* header row */}
           <View style={styles.sessionHeader}>
             <Text style={styles.sessionDate}>
               {todayAttendance.date || new Date().toISOString().split("T")[0]}
@@ -345,24 +317,16 @@ export default function Attend() {
             <View
               style={[
                 styles.statusPill,
-                {
-                  backgroundColor: isCheckedIn ? "#D1FAE5" : "#FEE2E2",
-                },
+                { backgroundColor: isCheckedIn ? "#D1FAE5" : "#FEE2E2" },
               ]}
             >
-              <View
-                style={[
-                  styles.statusDot,
-                  { backgroundColor: statusColor },
-                ]}
-              />
+              <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
               <Text style={[styles.statusPillText, { color: statusColor }]}>
                 {statusLabel}
               </Text>
             </View>
           </View>
 
-          {/* Live duration — big and prominent */}
           <View style={styles.durationBlock}>
             <MaterialIcons name="timer" size={20} color="#D96A17" />
             <Text style={styles.durationLabel}>
@@ -371,14 +335,12 @@ export default function Attend() {
             <Text style={styles.durationValue}>{liveDuration}</Text>
           </View>
 
-          {/* Detail rows */}
           <View style={styles.divider} />
 
           <View style={styles.sessionDetail}>
             <MaterialIcons name="login" size={16} color="#6B7280" />
             <Text style={styles.sessionLabel}>Check In</Text>
             <Text style={styles.sessionValue}>
-              {/* When checked in after re-entry, show current session start */}
               {isCheckedIn && activeCheckIn
                 ? formatTime(activeCheckIn)
                 : formatTime(todayAttendance.oldestCheckIn)}
@@ -393,16 +355,13 @@ export default function Attend() {
             />
             <Text style={styles.sessionLabel}>Check Out</Text>
             <Text
-              style={[
-                styles.sessionValue,
-                isCheckedIn && { color: "#9CA3AF" },
-              ]}
+              style={[styles.sessionValue, isCheckedIn && { color: "#9CA3AF" }]}
             >
               {isCheckedIn
                 ? "Active session"
                 : todayAttendance.latestCheckOut
-                  ? formatTime(todayAttendance.latestCheckOut)
-                  : "—"}
+                ? formatTime(todayAttendance.latestCheckOut)
+                : "—"}
             </Text>
           </View>
 
@@ -421,8 +380,7 @@ export default function Attend() {
               style={[
                 styles.sessionValue,
                 {
-                  color:
-                    todayDisplayStatus === "Present" ? "#10B981" : "#EF4444",
+                  color: todayDisplayStatus === "Present" ? "#10B981" : "#EF4444",
                   fontWeight: "600",
                 },
               ]}
@@ -441,7 +399,6 @@ export default function Attend() {
         </View>
       )}
 
-      {/* ── Auto Tracking Banner ───────────────────────────────────── */}
       <View style={styles.autoCard}>
         <MaterialIcons name="gps-fixed" size={20} color="#D96A17" />
         <Text style={styles.autoText}>
@@ -450,12 +407,10 @@ export default function Attend() {
         </Text>
       </View>
 
-      {/* ── Attendance History ─────────────────────────────────────── */}
       {attendanceHistory.length > 0 && (
         <>
           <Text style={styles.sectionTitle}>Recent History</Text>
           {attendanceHistory.map((record, index) => {
-            // Same "Absent" override for history rows that still have a checkIn
             const displayStatus =
               record.oldestCheckIn ? "Present" : record.status;
             const isPresent = displayStatus === "Present";
@@ -479,9 +434,7 @@ export default function Attend() {
                   <View
                     style={[
                       styles.historyBadge,
-                      {
-                        backgroundColor: isPresent ? "#D1FAE5" : "#FEE2E2",
-                      },
+                      { backgroundColor: isPresent ? "#D1FAE5" : "#FEE2E2" },
                     ]}
                   >
                     <Text
@@ -532,7 +485,6 @@ const styles = StyleSheet.create({
   },
   headerTitle: { color: "#fff", fontSize: 28, fontWeight: "bold", marginTop: 8 },
   headerSubtitle: { color: "#D1D5DB", fontSize: 14, marginTop: 4 },
-  userName: { color: "#fff", fontSize: 14, marginTop: 8, opacity: 0.9 },
 
   statsRow: {
     flexDirection: "row",
@@ -554,12 +506,7 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   statLabel: { fontSize: 12, color: "#6B7280", marginTop: 8 },
-  statValue: {
-    fontSize: 13,
-    fontWeight: "bold",
-    marginTop: 4,
-    textAlign: "center",
-  },
+  statValue: { fontSize: 13, fontWeight: "bold", marginTop: 4, textAlign: "center" },
 
   sectionTitle: {
     fontSize: 20,
@@ -617,11 +564,7 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
 
-  divider: {
-    height: 1,
-    backgroundColor: "#F3F4F6",
-    marginBottom: 12,
-  },
+  divider: { height: 1, backgroundColor: "#F3F4F6", marginBottom: 12 },
   sessionDetail: {
     flexDirection: "row",
     alignItems: "center",
@@ -640,12 +583,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     elevation: 2,
   },
-  emptyText: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#6B7280",
-    marginTop: 12,
-  },
+  emptyText: { fontSize: 15, fontWeight: "600", color: "#6B7280", marginTop: 12 },
   emptySubText: {
     fontSize: 13,
     color: "#9CA3AF",

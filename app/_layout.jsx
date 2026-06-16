@@ -1,47 +1,36 @@
+// app/_layout.jsx
+//
+// ⚠️ geofence.task import MUST be first — registers the bg task before anything runs
+import "../services/geofence.task";
+
 import { Stack } from "expo-router";
 import { useEffect } from "react";
-import { AppState } from "react-native";
 import locationService from "../services/location.service";
 
 export default function Layout() {
   useEffect(() => {
-    // Initialize location service when app starts
-    const initLocationService = async () => {
+    const init = async () => {
       try {
-        console.log("Initializing location service...");
+        console.log("[Layout] Starting location tracking...");
         await locationService.startTracking();
-        console.log("Location service initialized successfully");
+        console.log("[Layout] Location tracking started");
       } catch (error) {
-        console.error("Failed to initialize location service:", error);
+        console.error("[Layout] Failed to start tracking:", error);
       }
     };
-    
-    initLocationService();
-    
-    // Handle app state changes
-    const subscription = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState === 'active') {
-        // App came to foreground, restart tracking if needed
-        console.log("App came to foreground");
-        locationService.startTracking().catch(console.error);
-      } else if (nextAppState === 'background') {
-        console.log("App went to background");
-        // Tracking continues in background
-      }
-    });
-    
-    // Cleanup on unmount
+
+    init();
+
+    // This layout only unmounts on full app close / logout.
+    // stopTracking() stops the foreground watcher only —
+    // the background task keeps running independently.
+    // On LOGOUT call: await locationService.stopAllTracking()
     return () => {
-      subscription.remove();
       locationService.stopTracking();
     };
   }, []);
-  
+
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-      }}
-    />
+    <Stack screenOptions={{ headerShown: false }} />
   );
 }
