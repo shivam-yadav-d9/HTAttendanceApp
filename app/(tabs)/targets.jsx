@@ -1,9 +1,11 @@
+// app/(tabs)/targets.jsx
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -17,11 +19,8 @@ export default function Targets() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [user, setUser] = useState(null);
-  const [monthlyTarget, setMonthlyTarget] = useState(null);
   const [dailyTargets, setDailyTargets] = useState([]);
-  const [achievedTotal, setAchievedTotal] = useState(0);
-  const [targetTotal, setTargetTotal] = useState(0);
-  const [achievementPercentage, setAchievementPercentage] = useState(0);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     loadUserAndData();
@@ -29,16 +28,28 @@ export default function Targets() {
 
   const loadUserAndData = async () => {
     try {
+      setLoading(true);
+      setError(null);
+      
       const userData = await AsyncStorage.getItem("userData");
       if (userData) {
         const parsedUser = JSON.parse(userData);
         setUser(parsedUser);
         await fetchTargetData();
       } else {
-        router.replace("/");
+        // Try to get just the employee number
+        const empNumber = await AsyncStorage.getItem("employeeNumber");
+        if (empNumber) {
+          setUser({ employeeNumber: empNumber });
+          await fetchTargetData();
+        } else {
+          Alert.alert("Error", "Please login again");
+          router.replace("/");
+        }
       }
     } catch (error) {
       console.error("Error loading user:", error);
+      setError("Failed to load user data");
     } finally {
       setLoading(false);
     }
@@ -46,26 +57,20 @@ export default function Targets() {
 
   const fetchTargetData = async () => {
     try {
-      // Fetch monthly target
-      const monthlyResult = await targetService.getMonthlyTarget();
-      if (monthlyResult.success && monthlyResult.data) {
-        setMonthlyTarget(monthlyResult.data);
-        setTargetTotal(monthlyResult.data.salesTargetAmount);
-        setAchievedTotal(monthlyResult.data.targetAchieved || 0);
-        
-        if (monthlyResult.data.salesTargetAmount > 0) {
-          const percentage = ((monthlyResult.data.targetAchieved || 0) / monthlyResult.data.salesTargetAmount) * 100;
-          setAchievementPercentage(Math.min(Math.round(percentage), 100));
-        }
-      }
-
-      // Fetch daily targets
       const dailyResult = await targetService.getDailyTargets();
+      console.log("Daily targets result:", dailyResult);
+      
       if (dailyResult.success && dailyResult.data) {
         setDailyTargets(dailyResult.data);
+        setError(null);
+      } else {
+        setDailyTargets([]);
+        setError(dailyResult.message || "No daily targets found");
       }
     } catch (error) {
       console.error("Error fetching target data:", error);
+      setError(error.message || "Failed to fetch targets");
+      setDailyTargets([]);
     }
   };
 
@@ -86,6 +91,7 @@ export default function Targets() {
   };
 
   const formatDate = (dateString) => {
+    if (!dateString) return "N/A";
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', { 
       weekday: 'short', 
@@ -114,6 +120,7 @@ export default function Targets() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#D96A17" />
+        <Text style={styles.loadingText}>Loading targets...</Text>
       </View>
     );
   }
@@ -129,14 +136,14 @@ export default function Targets() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity style={styles.iconBtn}>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => router.back()}>
             <Ionicons name="chevron-back" size={28} color="#fff" />
           </TouchableOpacity>
 
           <View>
             <Text style={styles.headerTitle}>My Targets</Text>
             <Text style={styles.headerSub}>
-              {user?.name || "Employee"} • {user?.employeeNumber || "RC000447"}
+              {user?.name || "Employee"} • {user?.employeeNumber || "ID not found"}
             </Text>
           </View>
 
@@ -145,62 +152,6 @@ export default function Targets() {
           </TouchableOpacity>
         </View>
 
-        {/* Monthly Target Card */}
-        {monthlyTarget && (
-          <View style={styles.monthlyCard}>
-            <View style={styles.cardHeader}>
-              <View style={styles.cardTitleRow}>
-                <Ionicons name="calendar" size={24} color="#D96A17" />
-                <Text style={styles.cardTitle}>Monthly Target</Text>
-              </View>
-              <Text style={styles.monthYear}>
-                {monthlyTarget.month}/{monthlyTarget.year}
-              </Text>
-            </View>
-
-            <View style={styles.amountRow}>
-              <View style={styles.amountItem}>
-                <Text style={styles.amountLabel}>Target</Text>
-                <Text style={styles.amountValue}>{formatCurrency(targetTotal)}</Text>
-              </View>
-              <View style={styles.amountItem}>
-                <Text style={styles.amountLabel}>Achieved</Text>
-                <Text style={[styles.amountValue, { color: achievementPercentage >= 100 ? "#1E9E63" : "#D96A17" }]}>
-                  {formatCurrency(achievedTotal)}
-                </Text>
-              </View>
-              <View style={styles.amountItem}>
-                <Text style={styles.amountLabel}>Remaining</Text>
-                <Text style={styles.amountValue}>
-                  {formatCurrency(targetTotal - achievedTotal)}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.progressSection}>
-              <View style={styles.progressHeader}>
-                <Text style={styles.progressLabel}>Progress</Text>
-                <Text style={styles.progressPercent}>{achievementPercentage}%</Text>
-              </View>
-              <View style={styles.progressBg}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    { width: `${achievementPercentage}%`, backgroundColor: "#F5A300" },
-                  ]}
-                />
-              </View>
-            </View>
-
-            <View style={styles.statusRow}>
-              <Ionicons name="trending-up" size={16} color={getStatusColorFromProgress(achievementPercentage)} />
-              <Text style={[styles.statusText, { color: getStatusColorFromProgress(achievementPercentage) }]}>
-                {getStatusFromProgress(achievementPercentage)}
-              </Text>
-            </View>
-          </View>
-        )}
-
         {/* Daily Targets Section */}
         <View style={styles.dailySection}>
           <View style={styles.sectionHeader}>
@@ -208,7 +159,15 @@ export default function Targets() {
             <Text style={styles.sectionTitle}>Daily Targets</Text>
           </View>
 
-          {dailyTargets.length > 0 ? (
+          {error ? (
+            <View style={styles.emptyCard}>
+              <Ionicons name="alert-circle-outline" size={48} color="#D96A17" />
+              <Text style={styles.emptyText}>{error}</Text>
+              <TouchableOpacity style={styles.retryButton} onPress={fetchTargetData}>
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : dailyTargets && dailyTargets.length > 0 ? (
             dailyTargets.map((target) => {
               const progress = target.salesTargetAmount > 0 
                 ? Math.min(Math.round(((target.targetAchieved || 0) / target.salesTargetAmount) * 100), 100)
@@ -223,7 +182,7 @@ export default function Targets() {
                         {formatDate(target.targetDate)}
                       </Text>
                       <Text style={styles.dailyAmount}>
-                        {formatCurrency(target.targetAchieved || 0)} / {formatCurrency(target.salesTargetAmount)}
+                        {formatCurrency(target.targetAchieved || 0)} / {formatCurrency(target.salesTargetAmount || 0)}
                       </Text>
                     </View>
                     <View style={[styles.dailyBadge, { backgroundColor: statusColor }]}>
@@ -275,6 +234,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#F3EEE8",
   },
+  loadingText: {
+    marginTop: 10,
+    color: "#666",
+    fontSize: 14,
+  },
   header: {
     backgroundColor: "#0F2D52",
     paddingTop: 55,
@@ -296,113 +260,16 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 26,
     fontWeight: "800",
+    textAlign: "center",
   },
   headerSub: {
     color: "#D7DFEA",
     fontSize: 11,
     marginTop: 2,
+    textAlign: "center",
   },
-  // Monthly Target Card
-  monthlyCard: {
-    backgroundColor: "#fff",
-    marginHorizontal: 16,
-    marginTop: 20,
-    borderRadius: 20,
-    padding: 20,
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  cardTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#0F2D52",
-  },
-  monthYear: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#D96A17",
-    backgroundColor: "#FFF4EC",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  amountRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 20,
-  },
-  amountItem: {
-    flex: 1,
-    alignItems: "center",
-  },
-  amountLabel: {
-    fontSize: 12,
-    color: "#666",
-    marginBottom: 4,
-  },
-  amountValue: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#333",
-  },
-  progressSection: {
-    marginBottom: 15,
-  },
-  progressHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  progressLabel: {
-    fontSize: 13,
-    color: "#666",
-    fontWeight: "500",
-  },
-  progressPercent: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#F5A300",
-  },
-  progressBg: {
-    height: 8,
-    backgroundColor: "#ECECEC",
-    borderRadius: 4,
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%",
-    borderRadius: 4,
-  },
-  statusRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-  },
-  statusText: {
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  // Daily Targets Section
   dailySection: {
-    marginTop: 24,
+    marginTop: 20,
     marginHorizontal: 16,
   },
   sectionHeader: {
@@ -477,5 +344,27 @@ const styles = StyleSheet.create({
     color: "#D1D5DB",
     fontSize: 12,
     textAlign: "center",
+  },
+  progressBg: {
+    height: 8,
+    backgroundColor: "#ECECEC",
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 4,
+  },
+  retryButton: {
+    backgroundColor: "#D96A17",
+    paddingHorizontal: 30,
+    paddingVertical: 10,
+    borderRadius: 20,
+    marginTop: 10,
+  },
+  retryButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 14,
   },
 });

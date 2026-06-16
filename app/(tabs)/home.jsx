@@ -1,33 +1,154 @@
+// app/(tabs)/home.jsx
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-
-// Dummy JSON data for dashboard metrics
-const dashboardData = {
-  todayTarget: 25000,
-  totalTarget: 125000,
-  achievedTarget: 85000,
-  attendanceStatus: "P",
-  totalCoursesEnrolled: 8,
-  passPercentage: 78,
-};
+import {
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import dashboardService from "../../services/dashboard.service";
 
 function formatCurrency(value) {
-  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0 }).format(value);
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    minimumFractionDigits: 0,
+  }).format(value || 0);
 }
 
 export default function Home() {
-  const [data, setData] = useState(dashboardData);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
+  const [employeeNumber, setEmployeeNumber] = useState(null);
+  const [userName, setUserName] = useState("Employee");
 
-  // You can replace this with an actual API call later
+  const [data, setData] = useState({
+    monthlyTarget: 0,
+    monthlyAchieved: 0,
+    yesterdayTarget: 0,
+    yesterdayAchieved: 0,
+  });
+
   useEffect(() => {
-    // Simulating API fetch
-    // fetch('your-api-endpoint').then(res => res.json()).then(setData);
+    loadDashboard();
+    getUserName();
   }, []);
 
-  return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+  const getUserName = async () => {
+    try {
+      const userData = await AsyncStorage.getItem('userData');
+      if (userData) {
+        const parsedData = JSON.parse(userData);
+        console.log("User Data:", parsedData);
+        
+        // Try different possible field names for the user's name
+        const name = parsedData.name || 
+                    parsedData.fullName || 
+                    parsedData.displayName || 
+                    parsedData.employeeName ||
+                    parsedData.firstName + " " + parsedData.lastName ||
+                    "Employee";
+        
+        setUserName(name);
+      }
+    } catch (error) {
+      console.error("Error getting user name:", error);
+    }
+  };
 
+  const loadDashboard = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const empNum = await AsyncStorage.getItem("employeeNumber");
+      setEmployeeNumber(empNum);
+      
+      console.log("Current employee number:", empNum);
+      
+      if (!empNum) {
+        setError("Employee number not found. Please login again.");
+        setLoading(false);
+        return;
+      }
+
+      const response = await dashboardService.getEmployeeDashboard();
+      console.log("Dashboard Response:", response);
+
+      if (response && response.success) {
+        setData(response.data || {
+          monthlyTarget: 0,
+          monthlyAchieved: 0,
+          yesterdayTarget: 0,
+          yesterdayAchieved: 0,
+        });
+      } else {
+        setError(response?.message || "Failed to load dashboard data");
+      }
+    } catch (error) {
+      console.error("Dashboard Error:", error);
+      setError(error.message || "Failed to load dashboard. Please try again.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadDashboard();
+  };
+
+  const retryLoad = () => {
+    loadDashboard();
+  };
+
+  // Get greeting based on time of day
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good Morning";
+    if (hour < 17) return "Good Afternoon";
+    return "Good Evening";
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#D86A16" />
+        <Text style={styles.loadingText}>Loading Dashboard...</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.errorContainer}>
+        <Ionicons name="alert-circle-outline" size={50} color="#D86A16" />
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={retryLoad}>
+          <Text style={styles.retryButtonText}>Try Again</Text>
+        </TouchableOpacity>
+        <Text style={styles.empInfo}>
+          Employee ID: {employeeNumber || "Not available"}
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView
+      style={styles.container}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={["#D86A16"]} />
+      }
+    >
       {/* HEADER */}
       <View style={styles.header}>
         <View style={styles.blobRight} />
@@ -42,119 +163,72 @@ export default function Home() {
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.greeting}>Good Afternoon,</Text>
-            <Text style={styles.name}>shivam yadav</Text>
+            <Text style={styles.greeting}>{getGreeting()},</Text>
+            <Text style={styles.name}>{userName}</Text>
+
             <View style={styles.badgeRow}>
               <View style={styles.staffBadge}>
                 <Text style={styles.staffText}>STORE STAFF</Text>
               </View>
-              <View style={styles.locationBadge}>
-                <Ionicons name="location-outline" size={12} color="#fff" />
-                <Text style={styles.locationText}>HomeTown Mumba...</Text>
-              </View>
+              {employeeNumber && (
+                <View style={[styles.staffBadge, { backgroundColor: '#4A6FA5' }]}>
+                  <Text style={styles.staffText}>ID: {employeeNumber}</Text>
+                </View>
+              )}
             </View>
           </View>
 
           <TouchableOpacity style={styles.notification}>
             <Ionicons name="notifications-outline" size={20} color="#fff" />
-            <View style={styles.notifDot} />
           </TouchableOpacity>
-        </View>
-
-        <View style={styles.statsCard}>
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>58%</Text>
-            <Text style={styles.statLabel}>Learning</Text>
-          </View>
-          <View style={styles.divider} />
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>1</Text>
-            <Text style={styles.statLabel}>Tasks</Text>
-          </View>
-          <View style={styles.divider} />
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>68%</Text>
-            <Text style={styles.statLabel}>Targets</Text>
-          </View>
         </View>
       </View>
 
-      {/* METRICS SECTION - Three Rows with Two Cards Each */}
+      {/* DASHBOARD CARDS */}
       <View style={styles.metricsSection}>
         {/* Row 1 */}
         <View style={styles.metricsRow}>
-          {/* Today's Target Card */}
           <View style={styles.metricCard}>
-            <View style={styles.metricIconContainer}>
+            <View style={[styles.metricIconContainer, { backgroundColor: '#FFF5EC' }]}>
               <Ionicons name="flag-outline" size={20} color="#D86A16" />
             </View>
-            <Text style={styles.metricLabel}>Today's Target</Text>
-            <Text style={styles.metricValue}>{formatCurrency(data.todayTarget)}</Text>
-            <View style={styles.metricProgress}>
-              <View style={[styles.metricProgressFill, { width: `${(data.achievedTarget / data.totalTarget) * 100}%` }]} />
-            </View>
-            <Text style={styles.metricSubtext}>Progress: {Math.round((data.achievedTarget / data.totalTarget) * 100)}%</Text>
+            <Text style={styles.metricLabel}>Monthly Target</Text>
+            <Text style={styles.metricValue}>
+              {formatCurrency(data.monthlyTarget)}
+            </Text>
           </View>
 
-          {/* Total Target Card */}
           <View style={styles.metricCard}>
-            <View style={styles.metricIconContainer}>
-              <Ionicons name="stats-chart-outline" size={20} color="#1A5C3A" />
+            <View style={[styles.metricIconContainer, { backgroundColor: '#ECF9F0' }]}>
+              <Ionicons name="trophy-outline" size={20} color="#1A5C3A" />
             </View>
-            <Text style={styles.metricLabel}>Total Target</Text>
-            <Text style={styles.metricValue}>{formatCurrency(data.totalTarget)}</Text>
-            <Text style={styles.metricSubtext}>Overall Goal</Text>
+            <Text style={styles.metricLabel}>Monthly Achieved</Text>
+            <Text style={styles.metricValue}>
+              {formatCurrency(data.monthlyAchieved)}
+            </Text>
           </View>
         </View>
 
         {/* Row 2 */}
         <View style={styles.metricsRow}>
-          {/* Achieved Target Card */}
           <View style={styles.metricCard}>
-            <View style={styles.metricIconContainer}>
-              <Ionicons name="trophy-outline" size={20} color="#4A6FA5" />
+            <View style={[styles.metricIconContainer, { backgroundColor: '#ECF3FA' }]}>
+              <Ionicons name="calendar-outline" size={20} color="#4A6FA5" />
             </View>
-            <Text style={styles.metricLabel}>Achieved Target</Text>
-            <Text style={styles.metricValue}>{formatCurrency(data.achievedTarget)}</Text>
-            <Text style={styles.metricSubtext}>Out of {formatCurrency(data.totalTarget)}</Text>
-          </View>
-
-          {/* Attendance Status Card */}
-          <View style={styles.metricCard}>
-            <View style={styles.metricIconContainer}>
-              <Ionicons name="calendar-check-outline" size={20} color="#D86A16" />
-            </View>
-            <Text style={styles.metricLabel}>Attendance Status</Text>
-            <Text style={[styles.metricValue, { fontSize: 24 }]}>{data.attendanceStatus === "P" ? "✅" : "❌"}</Text>
-            <Text style={[styles.metricSubtext, { color: data.attendanceStatus === "P" ? "#1A5C3A" : "#D86A16" }]}>
-              {data.attendanceStatus === "P" ? "Present" : "Absent"}
+            <Text style={styles.metricLabel}>Yesterday Target</Text>
+            <Text style={styles.metricValue}>
+              {formatCurrency(data.yesterdayTarget)}
             </Text>
           </View>
-        </View>
 
-        {/* Row 3 */}
-        <View style={styles.metricsRow}>
-          {/* Total Courses Enrolled Card */}
           <View style={styles.metricCard}>
-            <View style={styles.metricIconContainer}>
-              <Ionicons name="book-outline" size={20} color="#3355CC" />
+            <View style={[styles.metricIconContainer, { backgroundColor: '#FFF5EC' }]}>
+              <Ionicons name="checkmark-circle-outline" size={20} color="#D86A16" />
             </View>
-            <Text style={styles.metricLabel}>Total Courses Enrolled</Text>
-            <Text style={styles.metricValue}>{data.totalCoursesEnrolled}</Text>
-            <Text style={styles.metricSubtext}>Active Courses</Text>
-          </View>
-
-          {/* Pass Percentage Card */}
-          <View style={styles.metricCard}>
-            <View style={styles.metricIconContainer}>
-              <Ionicons name="school-outline" size={20} color="#1A5C3A" />
-            </View>
-            <Text style={styles.metricLabel}>Pass Percentage</Text>
-            <Text style={styles.metricValue}>{data.passPercentage}%</Text>
-            <View style={styles.metricProgress}>
-              <View style={[styles.metricProgressFill, { width: `${data.passPercentage}%`, backgroundColor: "#1A5C3A" }]} />
-            </View>
-            <Text style={styles.metricSubtext}>Overall Performance</Text>
+            <Text style={styles.metricLabel}>Yesterday Achieved</Text>
+            <Text style={styles.metricValue}>
+              {formatCurrency(data.yesterdayAchieved)}
+            </Text>
           </View>
         </View>
       </View>
@@ -169,8 +243,48 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#F5EFE6",
   },
-
-  // HEADER
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#F5EFE6",
+  },
+  loadingText: {
+    marginTop: 10,
+    color: "#666",
+    fontSize: 14,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#F5EFE6",
+    padding: 20,
+  },
+  errorText: {
+    marginTop: 10,
+    color: "#D86A16",
+    fontSize: 16,
+    textAlign: "center",
+    marginBottom: 10,
+  },
+  empInfo: {
+    color: "#666",
+    fontSize: 12,
+    marginTop: 5,
+  },
+  retryButton: {
+    backgroundColor: "#D86A16",
+    paddingHorizontal: 30,
+    paddingVertical: 12,
+    borderRadius: 25,
+    marginTop: 15,
+  },
+  retryButtonText: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 14,
+  },
   header: {
     backgroundColor: "#0F2D52",
     paddingTop: 55,
@@ -210,6 +324,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginRight: 10,
+    position: "relative",
   },
   avatarBadge: {
     position: "absolute",
@@ -237,8 +352,7 @@ const styles = StyleSheet.create({
   badgeRow: {
     flexDirection: "row",
     marginTop: 4,
-    flexWrap: "wrap",
-    gap: 5,
+    gap: 6,
   },
   staffBadge: {
     backgroundColor: "#D86A16",
@@ -251,19 +365,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 10,
   },
-  locationBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.12)",
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 14,
-  },
-  locationText: {
-    color: "#fff",
-    fontSize: 10,
-    marginLeft: 3,
-  },
   notification: {
     width: 38,
     height: 38,
@@ -272,52 +373,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  notifDot: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#D86A16",
-    borderWidth: 1.5,
-    borderColor: "#0F2D52",
-  },
-  statsCard: {
-    marginTop: 14,
-    backgroundColor: "rgba(255,255,255,0.1)",
-    borderRadius: 16,
-    flexDirection: "row",
-    paddingVertical: 10,
-  },
-  statItem: {
-    flex: 1,
-    alignItems: "center",
-  },
-  divider: {
-    width: 1,
-    backgroundColor: "rgba(255,255,255,0.2)",
-  },
-  statValue: {
-    color: "#FFF4E2",
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-  statLabel: {
-    color: "#D5DCE5",
-    marginTop: 2,
-    fontSize: 11,
-  },
-
-  // METRICS SECTION
   metricsSection: {
     marginHorizontal: 14,
     marginTop: 14,
-    marginBottom: 6,
   },
   metricsRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     gap: 10,
     marginBottom: 10,
   },
@@ -325,16 +386,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#fff",
     borderRadius: 14,
-    padding: 10,
+    padding: 12,
+    elevation: 2,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    shadowRadius: 4,
   },
   metricIconContainer: {
-    width: 32,
-    height: 32,
+    width: 36,
+    height: 36,
     borderRadius: 10,
     backgroundColor: "#F7F9FC",
     justifyContent: "center",
@@ -342,32 +403,13 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   metricLabel: {
-    fontSize: 11,
-    color: "#888",
-    fontWeight: "600",
-    marginBottom: 3,
+    fontSize: 12,
+    color: "#666",
+    marginBottom: 4,
   },
   metricValue: {
     fontSize: 18,
     fontWeight: "bold",
     color: "#1A1A1A",
-    marginBottom: 4,
-  },
-  metricProgress: {
-    height: 3,
-    backgroundColor: "#F0F0F0",
-    borderRadius: 2,
-    marginTop: 4,
-    marginBottom: 3,
-  },
-  metricProgressFill: {
-    height: 3,
-    backgroundColor: "#D86A16",
-    borderRadius: 2,
-  },
-  metricSubtext: {
-    fontSize: 9,
-    color: "#999",
-    marginTop: 2,
   },
 });

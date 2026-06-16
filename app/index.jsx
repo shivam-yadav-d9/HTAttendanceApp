@@ -77,7 +77,7 @@ export default function LoginScreen() {
 
               // Use OnTrack API for auto-login
               const result = await authService.login(savedUsername, savedPassword);
-              
+
               if (result.success) {
                 if (subscription) subscription.remove();
                 router.replace("/(tabs)/home");
@@ -223,7 +223,7 @@ export default function LoginScreen() {
         <View style={styles.inputContainer}>
           <MaterialIcons name="badge" size={20} color="#D96A17" />
           <TextInput
-            placeholder="e.g., RC000447"
+            placeholder="Enter Username"
             value={username}
             onChangeText={setUsername}
             style={styles.input}
@@ -254,13 +254,7 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Demo Credentials Notice */}
-        <View style={styles.demoNote}>
-          <MaterialIcons name="info" size={14} color="#D96A17" />
-          <Text style={styles.demoText}>
-            Demo: Use RC000447 / Password@123
-          </Text>
-        </View>
+
 
         {/* Location notice */}
         <View style={styles.locationNote}>
@@ -284,11 +278,11 @@ export default function LoginScreen() {
         </TouchableOpacity>
 
         {/* Register Link */}
-        <TouchableOpacity onPress={goToRegister} style={styles.registerLink}>
+        {/* <TouchableOpacity onPress={goToRegister} style={styles.registerLink}>
           <Text style={styles.registerText}>
             New user? Register here
           </Text>
-        </TouchableOpacity>
+        </TouchableOpacity> */}
 
         <Text style={styles.footerText}>
           Use your assigned HomeTown employee credentials.

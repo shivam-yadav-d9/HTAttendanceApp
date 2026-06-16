@@ -1,17 +1,18 @@
+// app/(tabs)/LMS.jsx
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Modal,
-    RefreshControl,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Modal,
+  RefreshControl,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import lmsService from "../../services/lms.service";
 
@@ -33,6 +34,7 @@ export default function LMS() {
   const [quizLoading, setQuizLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [courseStarted, setCourseStarted] = useState(false);
+  const [employeeNumber, setEmployeeNumber] = useState(null);
 
   useEffect(() => {
     loadUserAndCourses();
@@ -40,16 +42,47 @@ export default function LMS() {
 
   const loadUserAndCourses = async () => {
     try {
+      setLoading(true);
+      
+      // Get employee number first
+      const empNumber = await getEmployeeNumber();
+      setEmployeeNumber(empNumber);
+      
       const userData = await AsyncStorage.getItem("userData");
       if (userData) {
         const parsedUser = JSON.parse(userData);
         setUser(parsedUser);
         await fetchCourses();
+      } else {
+        Alert.alert("Error", "Please login again");
       }
     } catch (error) {
       console.error("Error loading user:", error);
+      Alert.alert("Error", "Failed to load user data");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const getEmployeeNumber = async () => {
+    try {
+      const userData = await AsyncStorage.getItem("userData");
+      if (userData) {
+        const user = JSON.parse(userData);
+        if (user.employeeNumber) {
+          return user.employeeNumber;
+        }
+      }
+      
+      const empNumber = await AsyncStorage.getItem("employeeNumber");
+      if (empNumber) {
+        return empNumber;
+      }
+      
+      throw new Error("Employee number not found");
+    } catch (error) {
+      console.error("Error getting employee number:", error);
+      throw error;
     }
   };
 
@@ -81,10 +114,10 @@ export default function LMS() {
       if (questionsResult.success && questionsResult.data && questionsResult.data.length > 0) {
         setQuestions(questionsResult.data);
         
-        // Start attempt
+        // Start attempt with dynamic employee number
         const attemptResult = await lmsService.startAttempt(
           course._id,
-          user?.employeeNumber || "RC000447"
+          employeeNumber
         );
         
         if (attemptResult.success && attemptResult.data) {
@@ -167,6 +200,7 @@ export default function LMS() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#D96A17" />
+        <Text style={styles.loadingText}>Loading courses...</Text>
       </View>
     );
   }
@@ -186,7 +220,7 @@ export default function LMS() {
           Complete courses and grow your retail skills.
         </Text>
         <Text style={styles.userName}>
-          {user?.name} • {user?.employeeNumber}
+          {user?.name || "Employee"} • {employeeNumber || "ID not found"}
         </Text>
       </View>
 
@@ -416,6 +450,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "#F7F8FA",
+  },
+  loadingText: {
+    marginTop: 10,
+    color: "#666",
+    fontSize: 14,
   },
   header: {
     backgroundColor: "#0B2D4A",
