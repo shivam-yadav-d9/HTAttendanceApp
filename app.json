@@ -49,7 +49,8 @@
         {
           "locationWhenInUsePermission": "Allow app to access your location.",
           "locationAlwaysAndWhenInUsePermission": "Allow app to track your location.",
-          "isAndroidBackgroundLocationEnabled": true
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       [
@@ -72,7 +73,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "dd129885-140a-483f-92e4-b70b236ac66b"
+        "projectId": "5bfa02c7-500e-416b-b45a-c9290da59880"
       }
     }
   }
