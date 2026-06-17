@@ -72,21 +72,21 @@ class LocationService {
                 console.log('[LocationService] Background task already running');
                 return;
             }
+
             await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-                accuracy: Location.Accuracy.Balanced,
-                timeInterval: 30_000,   // ← reduce from 60s to 30s for faster response
-                distanceInterval: 10,   // 10 meters moved OR 30s elapsed
+                accuracy: Location.Accuracy.Balanced, // saves battery vs High
+                timeInterval: 60_000,   // fire at most every 60 s
+                distanceInterval: 10,   // OR every 50 m moved
+                // Android foreground-service notification keeps the task alive
                 foregroundService: {
                     notificationTitle: 'Attendance Tracking',
                     notificationBody: 'Tracking your location for auto check-in/out',
                     notificationColor: '#D96A17',
                 },
+                // iOS — keep waking the app even when killed
                 pausesUpdatesAutomatically: false,
                 showsBackgroundLocationIndicator: true,
                 activityType: Location.ActivityType.Other,
-                // ← ADD THESE for Android reliability:
-                deferredUpdatesInterval: 0,
-                deferredUpdatesDistance: 0,
             });
 
             console.log('[LocationService] Background task started');

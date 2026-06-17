@@ -1,8 +1,7 @@
 // services/geofence.task.js
 //
 // MUST be imported at app root (_layout.jsx) before anything else.
-// Runs in a SEPARATE JS context when app is closed.
-// No React, no eventEmitter, no in-memory cache from attendanceService.
+// Runs in a separate JS context when app is closed — no React, no eventEmitter.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as TaskManager from 'expo-task-manager';
@@ -13,24 +12,45 @@ export const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
 
 const BG_COOLDOWN_MS = 60_000; // 60s between check-in/out attempts
 
-// ── Persist cooldown + last known inside state in AsyncStorage ───────────────
-// Module-level vars reset every time bg task JS context restarts.
-// AsyncStorage survives across firings.
+// ── Persist cooldown timestamps in AsyncStorage ──────────────────────────────
+// Module-level vars reset every time Expo Go restarts the bg task JS context.
+// AsyncStorage survives across firings, so we use it for cooldown state.
 
-async function getBgState() {
+async function getLastActionTimes() {
     try {
-        const raw = await AsyncStorage.getItem('bgTaskState');
-        if (!raw) return { lastCheckIn: 0, lastCheckOut: 0, wasInside: null };
+        const raw = await AsyncStorage.getItem('bgTaskCooldowns');
+        if (!raw) return { lastCheckIn: 0, lastCheckOut: 0 };
         return JSON.parse(raw);
-    } catch {
-        return { lastCheckIn: 0, lastCheckOut: 0, wasInside: null };
-    }
+    } catch { return { lastCheckIn: 0, lastCheckOut: 0 }; }
 }
 
-async function setBgState(state) {
+async function setLastActionTimes(times) {
     try {
-        await AsyncStorage.setItem('bgTaskState', JSON.stringify(state));
+        await AsyncStorage.setItem('bgTaskCooldowns', JSON.stringify(times));
     } catch { }
+}
+
+// ── Stale session detection (without relying on in-memory openSessionCheckIn) ─
+// Looks at the history data directly: if today's record has a checkIn time
+// that matches (or is very close to) a previous day's checkOut time, the
+// backend never properly closed the old session.
+function isSessionStaleFromHistory(historyData) {
+    if (!historyData?.length) return false;
+
+    const today = new Date().toISOString().split('T')[0];
+    const todayRecord = historyData.find(r => r.date === today);
+    if (!todayRecord || todayRecord.latestCheckOut) return false; // already closed, not stale
+
+    // Check if the checkIn for today is from a PREVIOUS calendar day
+    if (todayRecord.oldestCheckIn) {
+        const checkInDate = new Date(todayRecord.oldestCheckIn).toISOString().split('T')[0];
+        if (checkInDate !== today) {
+            console.log(`[BgTask] Stale session: checkIn date ${checkInDate} ≠ today ${today}`);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
@@ -44,7 +64,6 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
     if (!location) return;
 
     const { latitude, longitude } = location.coords;
-    const now = Date.now();
 
     // ── Guard: need a logged-in user ─────────────────────────────────────────
     let employeeNumber;
@@ -64,92 +83,66 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
         OFFICE_LOCATION.latitude, OFFICE_LOCATION.longitude
     );
     const isInside = distance <= MAX_DISTANCE;
+    const now = Date.now();
 
     console.log(`[BgTask] dist=${Math.round(distance)}m inside=${isInside}`);
 
-    // ── Read persisted state ──────────────────────────────────────────────────
-    const bgState = await getBgState();
+    // ── Read cooldowns from AsyncStorage (survives JS context restarts) ───────
+    const cooldowns = await getLastActionTimes();
 
-    // ── Always update last known location for UI ──────────────────────────────
-    try {
-        await AsyncStorage.setItem('lastLocation', JSON.stringify({
-            latitude,
-            longitude,
-            distance: Math.round(distance),
-            isInside,
-            timestamp: new Date().toISOString(),
-        }));
-    } catch { }
-
-    // ── Fetch current status from API (cache is empty in bg context) ──────────
+    // ── Fetch history ONCE and derive everything from it ──────────────────────
+    // This avoids double-fetching: status derivation + stale check both use same data.
+    let historyData = [];
     let isCheckedIn = false;
+
     try {
-        const history = await attendanceService.getAttendanceHistory(employeeNumber);
+        // Use cache if fresh (within 30s) — avoids API call on every bg firing
+        const cachedStatus = attendanceService.statusCache;
+        const cacheAge = now - attendanceService.statusCacheTime;
 
-        // ── Stale session recovery ────────────────────────────────────────────
-        // If today's open session has a checkIn from a previous day, close it.
-        if (history.success && history.data?.length) {
-            const today = new Date().toISOString().split('T')[0];
-            const todayRecord = history.data.find(r => r.date === today);
+        if (cachedStatus !== null && cacheAge < attendanceService.STATUS_CACHE_TTL) {
+            // Cache is fresh — use it, skip the API call
+            isCheckedIn = cachedStatus === 'CHECKED_IN';
+            console.log(`[BgTask] Status: ${cachedStatus} (cache, age=${Math.round(cacheAge/1000)}s) — skipping API`);
+        } else {
+            // Cache stale — fetch from API
+            const history = await attendanceService.getAttendanceHistory(employeeNumber);
+            historyData = history.data || [];
 
-            if (todayRecord?.oldestCheckIn && !todayRecord?.latestCheckOut) {
-                const checkInDate = new Date(todayRecord.oldestCheckIn)
-                    .toISOString().split('T')[0];
+            // ── Stale session recovery ────────────────────────────────────────
+            // If today's open session checkIn is actually from yesterday,
+            // close it and re-check-in if still inside.
+            if (isSessionStaleFromHistory(historyData)) {
+                console.log('[BgTask] Stale session detected — recovering');
 
-                if (checkInDate !== today) {
-                    console.log('[BgTask] Stale session detected — recovering');
-                    await attendanceService.checkOut(employeeNumber, latitude, longitude);
+                const checkout = await attendanceService.checkOut(employeeNumber, latitude, longitude);
+                console.log('[BgTask] Stale checkout:', checkout.success);
 
-                    if (isInside) {
-                        const checkin = await attendanceService.checkIn(
-                            employeeNumber, latitude, longitude
-                        );
-                        console.log('[BgTask] Fresh check-in after recovery:', checkin.success);
-                        await AsyncStorage.setItem('lastAutoAction', JSON.stringify({
-                            action: 'CHECK_IN',
-                            timestamp: new Date().toISOString(),
-                            message: 'Auto checked in (session recovery)',
-                        }));
-                        await setBgState({ ...bgState, lastCheckIn: now, wasInside: true });
-                    } else {
-                        await setBgState({ ...bgState, wasInside: false });
-                    }
-                    return;
+                if (isInside) {
+                    const checkin = await attendanceService.checkIn(employeeNumber, latitude, longitude);
+                    console.log('[BgTask] Fresh check-in after recovery:', checkin.success);
+
+                    await AsyncStorage.setItem('lastAutoAction', JSON.stringify({
+                        action: 'CHECK_IN',
+                        timestamp: new Date().toISOString(),
+                        message: 'Auto checked in (session recovery)',
+                    }));
+                    await setLastActionTimes({ ...cooldowns, lastCheckIn: now });
                 }
+                return;
             }
+
+            isCheckedIn = attendanceService._deriveStatus(history) === 'CHECKED_IN';
         }
-
-        // ── Derive current check-in status directly from history ──────────────
-        // Do NOT use attendanceService._deriveStatus() — it relies on
-        // in-memory openSessionCheckIn which is always null in bg context.
-        if (history.success && history.data?.length) {
-            const today = new Date().toISOString().split('T')[0];
-            const todayRecord = history.data.find(r => r.date === today);
-
-            if (todayRecord) {
-                if (todayRecord.status === 'OPEN') {
-                    isCheckedIn = true;
-                } else if (todayRecord.oldestCheckIn && !todayRecord.latestCheckOut) {
-                    isCheckedIn = true;
-                } else {
-                    isCheckedIn = false;
-                }
-            }
-        }
-
-        console.log(`[BgTask] isCheckedIn=${isCheckedIn} wasInside=${bgState.wasInside}`);
-
     } catch (e) {
         console.error('[BgTask] Could not get status:', e);
         return;
     }
 
     // ── AUTO CHECK-IN ─────────────────────────────────────────────────────────
-    // Trigger on: inside + not checked in + cooldown passed
     if (isInside && !isCheckedIn) {
-        if ((now - bgState.lastCheckIn) < BG_COOLDOWN_MS) {
-            const remaining = Math.round((BG_COOLDOWN_MS - (now - bgState.lastCheckIn)) / 1000);
-            console.log(`[BgTask] Check-in cooldown — ${remaining}s left`);
+        if ((now - cooldowns.lastCheckIn) < BG_COOLDOWN_MS) {
+            console.log(`[BgTask] Check-in cooldown active — skipping (${Math.round((BG_COOLDOWN_MS - (now - cooldowns.lastCheckIn))/1000)}s left)`);
             return;
         }
 
@@ -158,14 +151,12 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
             const result = await attendanceService.checkIn(employeeNumber, latitude, longitude);
             console.log('[BgTask] Check-in:', result.success, result.message);
 
-            if (result.success || result.alreadyCheckedIn) {
-                await AsyncStorage.setItem('lastAutoAction', JSON.stringify({
-                    action: 'CHECK_IN',
-                    timestamp: new Date().toISOString(),
-                    message: result.message || 'Checked in automatically',
-                }));
-                await setBgState({ ...bgState, lastCheckIn: now, wasInside: true });
-            }
+            await AsyncStorage.setItem('lastAutoAction', JSON.stringify({
+                action: 'CHECK_IN',
+                timestamp: new Date().toISOString(),
+                message: result.message || 'Checked in automatically',
+            }));
+            await setLastActionTimes({ ...cooldowns, lastCheckIn: now });
         } catch (e) {
             console.error('[BgTask] Check-in error:', e);
         }
@@ -173,11 +164,9 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
     }
 
     // ── AUTO CHECK-OUT ────────────────────────────────────────────────────────
-    // Trigger on: outside + checked in + cooldown passed
     if (!isInside && isCheckedIn) {
-        if ((now - bgState.lastCheckOut) < BG_COOLDOWN_MS) {
-            const remaining = Math.round((BG_COOLDOWN_MS - (now - bgState.lastCheckOut)) / 1000);
-            console.log(`[BgTask] Check-out cooldown — ${remaining}s left`);
+        if ((now - cooldowns.lastCheckOut) < BG_COOLDOWN_MS) {
+            console.log(`[BgTask] Check-out cooldown active — skipping`);
             return;
         }
 
@@ -186,22 +175,19 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
             const result = await attendanceService.checkOut(employeeNumber, latitude, longitude);
             console.log('[BgTask] Check-out:', result.success, result.message);
 
-            if (result.success) {
-                await AsyncStorage.setItem('lastAutoAction', JSON.stringify({
-                    action: 'CHECK_OUT',
-                    timestamp: new Date().toISOString(),
-                    message: result.message || 'Checked out automatically',
-                    duration: result.data?.attendance?.durationMinutes || 0,
-                }));
-                await setBgState({ ...bgState, lastCheckOut: now, wasInside: false });
-            }
+            await AsyncStorage.setItem('lastAutoAction', JSON.stringify({
+                action: 'CHECK_OUT',
+                timestamp: new Date().toISOString(),
+                message: result.message || 'Checked out automatically',
+                duration: result.data?.attendance?.durationMinutes || 0,
+            }));
+            await setLastActionTimes({ ...cooldowns, lastCheckOut: now });
         } catch (e) {
             console.error('[BgTask] Check-out error:', e);
         }
         return;
     }
 
-    // No action needed — update wasInside
-    await setBgState({ ...bgState, wasInside: isInside });
-    console.log(`[BgTask] No action (inside=${isInside}, checkedIn=${isCheckedIn})`);
+    // Already in correct state — no action needed
+    console.log(`[BgTask] No action needed (inside=${isInside}, checkedIn=${isCheckedIn})`);
 });
