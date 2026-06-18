@@ -13,7 +13,8 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  View
+  TouchableOpacity,
+  View,
 } from "react-native";
 import attendanceService from "../../services/attendance.service";
 import eventEmitter from "../../services/eventEmitter";
@@ -68,6 +69,7 @@ export default function Attend() {
   const [isInsideOffice, setIsInsideOffice] = useState(false);
   const [currentStatus, setCurrentStatus] = useState("CHECKED_OUT");
   const [attendanceHistory, setAttendanceHistory] = useState([]);
+  const [visibleCount, setVisibleCount] = useState(10);
   // ✅ FIX: Start with loading=false so cached data shows immediately
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -181,7 +183,7 @@ export default function Attend() {
       if (
         attendanceService.statusCache !== null &&
         Date.now() - attendanceService.statusCacheTime <
-          attendanceService.STATUS_CACHE_TTL
+        attendanceService.STATUS_CACHE_TTL
       ) {
         status = attendanceService.statusCache;
       } else {
@@ -197,14 +199,14 @@ export default function Attend() {
         todayRecord ||
         (status === "CHECKED_IN" && openSession && openSessionIsToday
           ? {
-              date: today,
-              oldestCheckIn: openSession,
-              latestCheckOut: null,
-              totalDurationMinutes: 0,
-              totalSessions: 1,
-              totalDurationFormatted: "0h 0m",
-              status: "OPEN",
-            }
+            date: today,
+            oldestCheckIn: openSession,
+            latestCheckOut: null,
+            totalDurationMinutes: 0,
+            totalSessions: 1,
+            totalDurationFormatted: "0h 0m",
+            status: "OPEN",
+          }
           : null);
 
       setCurrentStatus(status);
@@ -284,10 +286,14 @@ export default function Attend() {
   const todayDisplayStatus = isCheckedIn
     ? "Present"
     : todayAttendance?.latestCheckOut
-    ? "Present"
-    : todayAttendance?.oldestCheckIn
-    ? "Present"
-    : todayAttendance?.status || "Absent";
+      ? "Present"
+      : todayAttendance?.oldestCheckIn
+        ? "Present"
+        : todayAttendance?.status || "Absent";
+
+  const sortedHistory = [...attendanceHistory].sort(
+    (a, b) => new Date(b.date) - new Date(a.date)
+  );
 
   // ── render ───────────────────────────────────────────────────────────────
   // ✅ FIX: Removed loading spinner entirely — skeleton/cache shows instantly.
@@ -397,8 +403,8 @@ export default function Attend() {
               {isCheckedIn
                 ? "Active session"
                 : todayAttendance.latestCheckOut
-                ? formatTime(todayAttendance.latestCheckOut)
-                : "—"}
+                  ? formatTime(todayAttendance.latestCheckOut)
+                  : "—"}
             </Text>
           </View>
 
@@ -448,49 +454,69 @@ export default function Attend() {
       {attendanceHistory.length > 0 && (
         <>
           <Text style={styles.sectionTitle}>Recent History</Text>
-          {attendanceHistory.map((record, index) => {
-            const displayStatus =
-              record.oldestCheckIn ? "Present" : record.status;
-            const isPresent = displayStatus === "Present";
-            return (
-              <View key={index} style={styles.historyCard}>
-                <View style={styles.historyLeft}>
-                  <Text style={styles.historyDate}>
-                    {formatDate(record.date)}
-                  </Text>
-                  <Text style={styles.historyMeta}>
-                    {record.totalSessions || 1} session
-                    {(record.totalSessions || 1) !== 1 ? "s" : ""}
-                    {" · "}
-                    {formatTime(record.oldestCheckIn)}
-                    {record.latestCheckOut
-                      ? ` – ${formatTime(record.latestCheckOut)}`
-                      : " – ongoing"}
-                  </Text>
-                </View>
-                <View style={styles.historyRight}>
-                  <View
-                    style={[
-                      styles.historyBadge,
-                      { backgroundColor: isPresent ? "#D1FAE5" : "#FEE2E2" },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.historyBadgeText,
-                        { color: isPresent ? "#065F46" : "#991B1B" },
-                      ]}
-                    >
-                      {displayStatus}
+          {sortedHistory
+            .slice(0, visibleCount)
+            .map((record, index) => {
+              const displayStatus =
+                record.oldestCheckIn ? "Present" : record.status;
+              const isPresent = displayStatus === "Present";
+              return (
+                <View key={index} style={styles.historyCard}>
+                  <View style={styles.historyLeft}>
+                    <Text style={styles.historyDate}>
+                      {formatDate(record.date)}
+                    </Text>
+                    <Text style={styles.historyMeta}>
+                      {record.totalSessions || 1} session
+                      {(record.totalSessions || 1) !== 1 ? "s" : ""}
+                      {" · "}
+                      {formatTime(record.oldestCheckIn)}
+                      {record.latestCheckOut
+                        ? ` – ${formatTime(record.latestCheckOut)}`
+                        : " – ongoing"}
                     </Text>
                   </View>
-                  <Text style={styles.historyDuration}>
-                    {record.totalDurationFormatted || "0h 0m"}
-                  </Text>
+                  <View style={styles.historyRight}>
+                    <View
+                      style={[
+                        styles.historyBadge,
+                        { backgroundColor: isPresent ? "#D1FAE5" : "#FEE2E2" },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.historyBadgeText,
+                          { color: isPresent ? "#065F46" : "#991B1B" },
+                        ]}
+                      >
+                        {displayStatus}
+                      </Text>
+                    </View>
+                    <Text style={styles.historyDuration}>
+                      {record.totalDurationFormatted || "0h 0m"}
+                    </Text>
+                  </View>
                 </View>
-              </View>
-            );
-          })}
+              );
+            })}
+
+          {sortedHistory.length > visibleCount && (
+            <TouchableOpacity
+              style={styles.loadMoreBtn}
+              onPress={() =>
+                setVisibleCount(prev => prev + 10)
+              }
+            >
+              <MaterialIcons
+                name="expand-more"
+                size={40}
+                color="#D96A17"
+              />
+              <Text style={styles.loadMoreText}>
+                Show More
+              </Text>
+            </TouchableOpacity>
+          )}
         </>
       )}
 
@@ -678,4 +704,15 @@ const styles = StyleSheet.create({
   historyBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20 },
   historyBadgeText: { fontSize: 12, fontWeight: "600" },
   historyDuration: { fontSize: 12, color: "#6B7280", fontWeight: "500" },
+
+  loadMoreBtn: {
+    alignItems: "center",
+    marginTop: 10,
+    marginBottom: 20,
+  },
+
+  loadMoreText: {
+    color: "#D96A17",
+    fontWeight: "600",
+  },
 });
