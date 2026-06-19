@@ -184,7 +184,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
         }
         await setWasInside(true);
         return;
-    }
+    };
 
     // ── AUTO CHECK-OUT ────────────────────────────────────────────────────────
     if (!isInside && isCheckedIn && (exitedOffice || firstRun)) {
