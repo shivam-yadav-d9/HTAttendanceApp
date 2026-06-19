@@ -1,6 +1,6 @@
 export const OFFICE_LOCATION = {
-  latitude: 19.132989,
-  longitude: 72.866625,
+  latitude:19.137031,
+  longitude:72.862710,
 };
 
 export const MAX_DISTANCE = 100;
