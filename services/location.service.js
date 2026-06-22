@@ -6,6 +6,7 @@ import { MAX_DISTANCE, OFFICE_LOCATION, calculateDistance } from '../utils/locat
 import attendanceService from './attendance.service';
 import eventEmitter from './eventEmitter';
 import { BACKGROUND_LOCATION_TASK } from './geofence.task';
+import notificationService from './notification.service';
 
 class LocationService {
     constructor() {
@@ -309,13 +310,22 @@ class LocationService {
                     message: result.message,
                 }));
 
+                const isForeground = AppState.currentState === 'active';
+
                 // ✅ Don't alert if this was just a "already checked in" confirmation
-                if (AppState.currentState === 'active' && !result.alreadyCheckedIn) {
+                if (isForeground && !result.alreadyCheckedIn) {
                     Alert.alert(
                         'Auto Check-In ✓',
                         `Welcome! Checked in at ${new Date().toLocaleTimeString()}`,
                         [{ text: 'OK' }]
                     );
+                }
+
+                // ✅ NEW: when the app is backgrounded/minimized (not killed —
+                // that case is handled by geofence.task.js), fire a real
+                // push notification instead of the in-app Alert.
+                if (!isForeground && !result.alreadyCheckedIn) {
+                    await notificationService.notifyCheckIn(new Date());
                 }
 
                 setTimeout(() => {
@@ -344,25 +354,32 @@ class LocationService {
             if (result.success) {
                 console.log('[LocationService] Check-out OK:', result.message);
 
+                const durationMinutes = result.data?.attendance?.durationMinutes || 0;
                 let durationMsg = '';
-                if (result.data?.attendance?.durationMinutes) {
-                    const mins = result.data.attendance.durationMinutes;
-                    durationMsg = `\nTotal: ${Math.floor(mins / 60)}h ${mins % 60}m`;
+                if (durationMinutes) {
+                    durationMsg = `\nTotal: ${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m`;
                 }
 
                 await AsyncStorage.setItem('lastAutoAction', JSON.stringify({
                     action: 'CHECK_OUT',
                     timestamp: new Date().toISOString(),
-                    duration: result.data?.attendance?.durationMinutes || 0,
+                    duration: durationMinutes,
                     message: result.message,
                 }));
 
-                if (AppState.currentState === 'active') {
+                const isForeground = AppState.currentState === 'active';
+
+                if (isForeground) {
                     Alert.alert(
                         'Auto Check-Out ✓',
                         `Checked out at ${new Date().toLocaleTimeString()}.${durationMsg}`,
                         [{ text: 'OK' }]
                     );
+                }
+
+                // ✅ NEW: push notification when minimized (not killed)
+                if (!isForeground) {
+                    await notificationService.notifyCheckOut(new Date(), durationMinutes);
                 }
 
                 setTimeout(() => {

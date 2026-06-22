@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as TaskManager from 'expo-task-manager';
 import { MAX_DISTANCE, OFFICE_LOCATION, calculateDistance } from '../utils/location';
 import attendanceService from './attendance.service';
+import notificationService from './notification.service';
 
 export const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
 
@@ -136,6 +137,10 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
                     }));
                     await setLastActionTimes({ ...cooldowns, lastCheckIn: now });
                     await setWasInside(true);
+
+                    if (checkin.success) {
+                        await notificationService.notifyCheckIn(new Date());
+                    }
                 } else {
                     await setWasInside(false);
                 }
@@ -179,6 +184,12 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
                 message: result.message || 'Checked in automatically',
             }));
             await setLastActionTimes({ ...cooldowns, lastCheckIn: now });
+
+            // ✅ NEW: fire a real push notification — this is what shows up
+            // even when the app is fully killed, because this task runs headless.
+            if (result.success && !result.alreadyCheckedIn) {
+                await notificationService.notifyCheckIn(new Date());
+            }
         } catch (e) {
             console.error('[BgTask] Check-in error:', e);
         }
@@ -198,13 +209,19 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
         try {
             const result = await attendanceService.checkOut(employeeNumber, latitude, longitude);
             console.log('[BgTask] Check-out:', result.success, result.message);
+            const durationMinutes = result.data?.attendance?.durationMinutes || 0;
             await AsyncStorage.setItem('lastAutoAction', JSON.stringify({
                 action: 'CHECK_OUT',
                 timestamp: new Date().toISOString(),
                 message: result.message || 'Checked out automatically',
-                duration: result.data?.attendance?.durationMinutes || 0,
+                duration: durationMinutes,
             }));
             await setLastActionTimes({ ...cooldowns, lastCheckOut: now });
+
+            // ✅ NEW: fire a real push notification on checkout too
+            if (result.success) {
+                await notificationService.notifyCheckOut(new Date(), durationMinutes);
+            }
         } catch (e) {
             console.error('[BgTask] Check-out error:', e);
         }
