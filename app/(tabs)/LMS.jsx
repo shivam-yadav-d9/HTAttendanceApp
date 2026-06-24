@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Modal,
   RefreshControl,
   SafeAreaView,
@@ -16,84 +17,62 @@ import {
 } from "react-native";
 import lmsService from "../../services/lms.service";
 
+// ─── Modal "screens" ───────────────────────────────────────────────
+// null        → nothing open
+// 'detail'    → course detail view
+// 'quiz'      → active quiz
+// 'result'    → quiz result
+// ───────────────────────────────────────────────────────────────────
+
 export default function LMS() {
   const [user, setUser] = useState(null);
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [employeeNumber, setEmployeeNumber] = useState(null);
+
+  // Modal / screen state
+  const [modalScreen, setModalScreen] = useState(null); // null | 'detail' | 'quiz' | 'result'
   const [selectedCourse, setSelectedCourse] = useState(null);
-  const [modalVisible, setModalVisible] = useState(false);
-  
-  // Quiz States
+
+  // Quiz state
   const [questions, setQuestions] = useState([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState(null);
   const [score, setScore] = useState(0);
-  const [quizCompleted, setQuizCompleted] = useState(false);
   const [attemptId, setAttemptId] = useState(null);
   const [quizLoading, setQuizLoading] = useState(false);
   const [result, setResult] = useState(null);
-  const [courseStarted, setCourseStarted] = useState(false);
-  const [employeeNumber, setEmployeeNumber] = useState(null);
 
   useEffect(() => {
     loadUserAndCourses();
   }, []);
 
+  // ─── Data loading ─────────────────────────────────────────────────
+
   const loadUserAndCourses = async () => {
     try {
       setLoading(true);
-      
-      // Get employee number first
-      const empNumber = await getEmployeeNumber();
-      setEmployeeNumber(empNumber);
-      
       const userData = await AsyncStorage.getItem("userData");
       if (userData) {
-        const parsedUser = JSON.parse(userData);
-        setUser(parsedUser);
-        await fetchCourses();
-      } else {
-        Alert.alert("Error", "Please login again");
+        const parsed = JSON.parse(userData);
+        setUser(parsed);
+        setEmployeeNumber(parsed.employeeNumber || null);
       }
-    } catch (error) {
-      console.error("Error loading user:", error);
+      await fetchCourses();
+    } catch (e) {
       Alert.alert("Error", "Failed to load user data");
     } finally {
       setLoading(false);
     }
   };
 
-  const getEmployeeNumber = async () => {
-    try {
-      const userData = await AsyncStorage.getItem("userData");
-      if (userData) {
-        const user = JSON.parse(userData);
-        if (user.employeeNumber) {
-          return user.employeeNumber;
-        }
-      }
-      
-      const empNumber = await AsyncStorage.getItem("employeeNumber");
-      if (empNumber) {
-        return empNumber;
-      }
-      
-      throw new Error("Employee number not found");
-    } catch (error) {
-      console.error("Error getting employee number:", error);
-      throw error;
-    }
-  };
-
   const fetchCourses = async () => {
     try {
-      const result = await lmsService.getAllCourses();
-      if (result.success && result.data) {
-        setCourses(result.data);
-      }
-    } catch (error) {
-      console.error("Error fetching courses:", error);
+      const res = await lmsService.getAllCourses();
+      if (res.success && res.data) setCourses(res.data);
+    } catch (e) {
+      console.error("fetchCourses:", e);
     }
   };
 
@@ -103,98 +82,167 @@ export default function LMS() {
     setRefreshing(false);
   };
 
-  const startCourse = async (course) => {
-    setQuizLoading(true);
+  // ─── Course card tap → detail screen ─────────────────────────────
+
+  const openCourseDetail = (course) => {
     setSelectedCourse(course);
-    setCourseStarted(true);
-    
+    setModalScreen("detail");
+  };
+
+  // ─── Start button on detail screen → quiz ─────────────────────────
+
+  const startQuiz = async () => {
+    if (!employeeNumber) {
+      Alert.alert("Error", "Employee number not found. Please login again.");
+      return;
+    }
+    setQuizLoading(true);
     try {
-      // Fetch questions for the course
-      const questionsResult = await lmsService.getCourseQuestions(course._id);
-      if (questionsResult.success && questionsResult.data && questionsResult.data.length > 0) {
-        setQuestions(questionsResult.data);
-        
-        // Start attempt with dynamic employee number
-        const attemptResult = await lmsService.startAttempt(
-          course._id,
-          employeeNumber
-        );
-        
-        if (attemptResult.success && attemptResult.data) {
-          setAttemptId(attemptResult.data._id);
-          setModalVisible(true);
-          setCurrentQuestionIndex(0);
-          setSelectedOption(null);
-          setScore(0);
-          setQuizCompleted(false);
-        } else {
-          Alert.alert("Error", "Failed to start course. Please try again.");
+      let questionsData = selectedCourse.questions || [];
+      
+      if (questionsData.length === 0) {
+        const questionsRes = await lmsService.getCourseQuestions(selectedCourse._id);
+        if (!questionsRes.success || !questionsRes.data?.length) {
+          Alert.alert("Info", "No questions available for this course yet.");
+          setQuizLoading(false);
+          return;
         }
-      } else {
-        Alert.alert("Info", "No questions available for this course yet.");
+        questionsData = questionsRes.data;
       }
-    } catch (error) {
-      console.error("Error starting course:", error);
+
+      const attemptRes = await lmsService.startAttempt(selectedCourse._id, employeeNumber);
+      if (!attemptRes.success || !attemptRes.data) {
+        Alert.alert("Error", "Failed to start attempt. Please try again.");
+        setQuizLoading(false);
+        return;
+      }
+
+      setQuestions(questionsData);
+      setAttemptId(attemptRes.data._id);
+      setCurrentQuestionIndex(0);
+      setSelectedOption(null);
+      setScore(0);
+      setResult(null);
+      setModalScreen("quiz");
+    } catch (e) {
       Alert.alert("Error", "Failed to load course content.");
     } finally {
       setQuizLoading(false);
-      setCourseStarted(false);
     }
   };
 
-  const handleOptionSelect = async (index) => {
+  // ─── Quiz interactions ─────────────────────────────────────────────
+
+  const handleOptionSelect = async (idx) => {
     if (selectedOption !== null) return;
-    setSelectedOption(index);
-    
-    const currentQuestion = questions[currentQuestionIndex];
-    const isCorrect = index === currentQuestion.correctAnswer;
-    
-    if (isCorrect) {
-      setScore((prev) => prev + 1);
-    }
-    
-    // Submit answer to API
-    if (attemptId) {
-      await lmsService.submitAnswer(attemptId, currentQuestion._id, index);
-    }
+    setSelectedOption(idx);
+    const q = questions[currentQuestionIndex];
+    if (idx === q.correctAnswer) setScore((p) => p + 1);
+    if (attemptId) await lmsService.submitAnswer(attemptId, q._id, idx);
   };
 
   const handleNext = async () => {
     if (currentQuestionIndex < questions.length - 1) {
-      setCurrentQuestionIndex((prev) => prev + 1);
+      setCurrentQuestionIndex((p) => p + 1);
       setSelectedOption(null);
     } else {
-      // Submit final attempt
       setQuizLoading(true);
-      const submitResult = await lmsService.submitAttempt(attemptId);
-      if (submitResult.success && submitResult.data) {
-        setResult(submitResult.data);
-        setQuizCompleted(true);
+      const submitRes = await lmsService.submitAttempt(attemptId);
+      if (submitRes.success && submitRes.data) {
+        setResult(submitRes.data);
+        setModalScreen("result");
       } else {
-        Alert.alert("Error", "Failed to submit quiz. Please try again.");
+        Alert.alert("Error", "Failed to submit quiz.");
       }
       setQuizLoading(false);
     }
   };
 
-  const closeQuiz = () => {
-    setModalVisible(false);
+  // ─── Close / reset ─────────────────────────────────────────────────
+
+  const closeModal = () => {
+    setModalScreen(null);
     setSelectedCourse(null);
     setQuestions([]);
     setCurrentQuestionIndex(0);
     setSelectedOption(null);
     setScore(0);
-    setQuizCompleted(false);
     setAttemptId(null);
     setResult(null);
-    setCourseStarted(false);
   };
 
+  // ─── Helpers ───────────────────────────────────────────────────────
+
   const getCourseProgress = () => {
-    const totalCourses = courses.length;
-    const completedCourses = courses.filter(c => c.completed).length;
-    return totalCourses > 0 ? Math.round((completedCourses / totalCourses) * 100) : 0;
+    if (!courses.length) return 0;
+    return Math.round((courses.filter((c) => c.passed).length / courses.length) * 100);
   };
+
+  const parseContentPoints = (contentText) => {
+    if (!contentText) return [];
+    
+    const lines = contentText.split('\n');
+    const points = [];
+    let currentSection = '';
+    
+    lines.forEach((line, index) => {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) return;
+      
+      if (trimmedLine.endsWith(':') || trimmedLine === trimmedLine.toUpperCase()) {
+        if (trimmedLine.length > 0) {
+          currentSection = trimmedLine.replace(':', '').trim();
+          points.push({
+            type: 'section',
+            text: currentSection,
+            index: index
+          });
+        }
+      } 
+      else if (/^\d+\./.test(trimmedLine)) {
+        const cleanText = trimmedLine.replace(/^\d+\.\s*/, '');
+        points.push({
+          type: 'point',
+          text: cleanText,
+          isNumbered: true,
+          index: index
+        });
+      }
+      else if (trimmedLine.startsWith('•') || trimmedLine.startsWith('-')) {
+        const cleanText = trimmedLine.replace(/^[•-]\s*/, '');
+        points.push({
+          type: 'point',
+          text: cleanText,
+          isBullet: true,
+          index: index
+        });
+      }
+      else if (line.startsWith('  ') || line.startsWith('\t')) {
+        const cleanText = trimmedLine.replace(/^[•-]\s*/, '');
+        points.push({
+          type: 'subpoint',
+          text: cleanText,
+          index: index
+        });
+      }
+      else {
+        const lastPoint = points[points.length - 1];
+        if (lastPoint && (lastPoint.type === 'point' || lastPoint.type === 'subpoint')) {
+          lastPoint.text += ' ' + trimmedLine;
+        } else {
+          points.push({
+            type: 'text',
+            text: trimmedLine,
+            index: index
+          });
+        }
+      }
+    });
+    
+    return points;
+  };
+
+  // ─── Render ────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -206,24 +254,22 @@ export default function LMS() {
   }
 
   return (
-    <ScrollView 
-      style={styles.container} 
+    <ScrollView
+      style={styles.container}
       showsVerticalScrollIndicator={false}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
+      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.smallTitle}>LEARNING HUB</Text>
         <Text style={styles.title}>My Learning</Text>
-        <Text style={styles.subtitle}>
-          Complete courses and grow your retail skills.
-        </Text>
+        <Text style={styles.subtitle}>Complete courses and grow your retail skills.</Text>
         <Text style={styles.userName}>
           {user?.name || "Employee"} • {employeeNumber || "ID not found"}
         </Text>
       </View>
 
+      {/* Progress card */}
       <View style={styles.progressCard}>
         <View>
           <Text style={styles.progressLabel}>Overall Progress</Text>
@@ -234,77 +280,211 @@ export default function LMS() {
         </View>
       </View>
 
+      {/* Stats */}
       <View style={styles.statsRow}>
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>{courses.length}</Text>
-          <Text style={styles.statText}>Courses</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>{courses.filter(c => c.completed).length}</Text>
-          <Text style={styles.statText}>In Progress</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>{courses.filter(c => c.passed).length}</Text>
-          <Text style={styles.statText}>Completed</Text>
-        </View>
+        {[
+          { num: courses.length, label: "Courses" },
+          { num: courses.filter((c) => c.completed).length, label: "In Progress" },
+          { num: courses.filter((c) => c.passed).length, label: "Completed" },
+        ].map((s) => (
+          <View key={s.label} style={styles.statBox}>
+            <Text style={styles.statNumber}>{s.num}</Text>
+            <Text style={styles.statText}>{s.label}</Text>
+          </View>
+        ))}
       </View>
 
+      {/* Course list */}
       <Text style={styles.sectionTitle}>Available Courses</Text>
-
-      {courses.map((course, index) => (
-        <TouchableOpacity 
-          key={course._id || index} 
+      {courses.map((course, i) => (
+        <TouchableOpacity
+          key={course._id || i}
           style={styles.courseCard}
-          onPress={() => startCourse(course)}
-          disabled={courseStarted}
+          onPress={() => openCourseDetail(course)}
+          activeOpacity={0.8}
         >
           <View style={styles.courseIcon}>
             <Ionicons name="book-outline" size={28} color="#ff7b00" />
           </View>
-
           <View style={styles.courseInfo}>
             <Text style={styles.courseTitle}>{course.title}</Text>
             <Text style={styles.courseSubtitle} numberOfLines={2}>
               {course.description}
             </Text>
             <View style={styles.courseMeta}>
-              <Text style={styles.passingInfo}>
-                Passing: {course.passingPercentage}%
-              </Text>
+              {course.department && (
+                <View style={styles.departmentBadge}>
+                  <Text style={styles.departmentText}>{course.department}</Text>
+                </View>
+              )}
+              <Text style={styles.passingInfo}>Pass: {course.passingPercentage}%</Text>
               <Text style={styles.questionCount}>
-                {course.questionCount || "Multiple"} Questions
+                {course.questionCount || "Multiple"} Qs
               </Text>
             </View>
           </View>
-
           <View style={styles.playButton}>
-            {courseStarted && selectedCourse?._id === course._id ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Ionicons name="play" size={20} color="#fff" />
-            )}
+            <Ionicons name="chevron-forward" size={20} color="#fff" />
           </View>
         </TouchableOpacity>
       ))}
 
       <View style={{ height: 40 }} />
 
-      {/* Quiz Modal */}
+      {/* ── Single Modal with 3 inner screens ── */}
       <Modal
         animationType="slide"
         transparent={false}
-        visible={modalVisible}
-        onRequestClose={closeQuiz}
+        visible={modalScreen !== null}
+        onRequestClose={closeModal}
       >
         <SafeAreaView style={styles.modalContainer}>
-          {!quizCompleted && questions.length > 0 ? (
-            // Active Quiz View
+          {/* ── SCREEN 1: Course Detail ── */}
+          {modalScreen === "detail" && selectedCourse && (
+            <View style={{ flex: 1 }}>
+              {/* Top bar */}
+              <View style={styles.detailTopBar}>
+                <TouchableOpacity onPress={closeModal} style={styles.backBtn}>
+                  <Ionicons name="arrow-back" size={22} color="#0B2D4A" />
+                </TouchableOpacity>
+                <Text style={styles.detailTopTitle} numberOfLines={1}>
+                  Course Details
+                </Text>
+                <View style={{ width: 36 }} />
+              </View>
+
+              <ScrollView contentContainerStyle={styles.detailScroll}>
+                {/* Status Badge */}
+            
+
+                {/* Course Title */}
+                <Text style={styles.detailTitle}>{selectedCourse.title}</Text>
+                <Text style={styles.detailSubtitle}>{selectedCourse.description}</Text>
+
+                {/* Info Items - Key Value Pairs */}
+                <View style={styles.infoContainer}>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Department</Text>
+                    <Text style={styles.infoValue}>{selectedCourse.department || "N/A"}</Text>
+                  </View>
+                  <View style={styles.infoDivider} />
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Passing Percentage</Text>
+                    <Text style={styles.infoValue}>{selectedCourse.passingPercentage}%</Text>
+                  </View>
+                  <View style={styles.infoDivider} />
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Questions</Text>
+                    <Text style={styles.infoValue}>{selectedCourse.questionCount || "Multiple"}</Text>
+                  </View>
+                </View>
+
+                {/* Resources Section */}
+                {(selectedCourse.pdfUrl || selectedCourse.videoUrl) && (
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTitle}>Resources</Text>
+                    {selectedCourse.pdfUrl && selectedCourse.pdfUrl.trim() !== "" && (
+                      <TouchableOpacity
+                        style={styles.resourceRow}
+                        onPress={() => Linking.openURL(selectedCourse.pdfUrl)}
+                      >
+                        <Ionicons name="document-text-outline" size={20} color="#C62828" />
+                        <Text style={styles.resourceText}>Course PDF Guide</Text>
+                        <Ionicons name="open-outline" size={16} color="#999" />
+                      </TouchableOpacity>
+                    )}
+                    {selectedCourse.videoUrl && selectedCourse.videoUrl.trim() !== "" && (
+                      <TouchableOpacity
+                        style={styles.resourceRow}
+                        onPress={() => Linking.openURL(selectedCourse.videoUrl)}
+                      >
+                        <Ionicons name="videocam-outline" size={20} color="#1565C0" />
+                        <Text style={styles.resourceText}>Training Video</Text>
+                        <Ionicons name="open-outline" size={16} color="#999" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+
+                {/* What you'll learn */}
+                {selectedCourse.contentText && (
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTitle}>What You'll Learn</Text>
+                    <View style={styles.contentPointsContainer}>
+                      {parseContentPoints(selectedCourse.contentText).map((item, index) => {
+                        if (item.type === 'section') {
+                          return (
+                            <View key={index} style={styles.sectionHeaderContainer}>
+                              <View style={styles.sectionDivider} />
+                              <Text style={styles.sectionHeaderText}>{item.text}</Text>
+                              <View style={styles.sectionDivider} />
+                            </View>
+                          );
+                        } else if (item.type === 'point') {
+                          return (
+                            <View key={index} style={styles.contentPointItem}>
+                              <View style={styles.contentPointBullet}>
+                                <Ionicons 
+                                  name={item.isNumbered ? "number-circle" : "checkbox-outline"} 
+                                  size={20} 
+                                  color="#ff7b00" 
+                                />
+                              </View>
+                              <Text style={styles.contentPointText}>{item.text}</Text>
+                            </View>
+                          );
+                        } else if (item.type === 'subpoint') {
+                          return (
+                            <View key={index} style={[styles.contentPointItem, styles.subPointItem]}>
+                              <View style={styles.contentPointBullet}>
+                                <Ionicons name="remove-outline" size={16} color="#999" />
+                              </View>
+                              <Text style={styles.contentSubPointText}>{item.text}</Text>
+                            </View>
+                          );
+                        } else {
+                          return (
+                            <View key={index} style={styles.contentTextItem}>
+                              <Text style={styles.contentPlainText}>{item.text}</Text>
+                            </View>
+                          );
+                        }
+                      })}
+                    </View>
+                  </View>
+                )}
+
+                {/* Start button */}
+                <TouchableOpacity
+                  style={styles.startButton}
+                  onPress={startQuiz}
+                  disabled={quizLoading}
+                >
+                  {quizLoading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <Ionicons name="play-circle-outline" size={22} color="#fff" />
+                      <Text style={styles.startButtonText}>Start Assessment</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <View style={{ height: 30 }} />
+              </ScrollView>
+            </View>
+          )}
+
+          {/* ── SCREEN 2: Active Quiz ── */}
+          {modalScreen === "quiz" && questions.length > 0 && (
             <View style={styles.quizContainer}>
               <View style={styles.quizHeader}>
-                <TouchableOpacity onPress={closeQuiz} style={styles.closeButton}>
+                <TouchableOpacity onPress={closeModal} style={styles.closeButton}>
                   <Ionicons name="close" size={24} color="#666" />
                 </TouchableOpacity>
-                <Text style={styles.quizTitle}>{selectedCourse?.title}</Text>
+                <Text style={styles.quizTitle} numberOfLines={1}>
+                  {selectedCourse?.title}
+                </Text>
                 <View style={styles.progressIndicator}>
                   <Text style={styles.progressText}>
                     {currentQuestionIndex + 1}/{questions.length}
@@ -324,23 +504,22 @@ export default function LMS() {
 
                 <View style={styles.optionsGrid}>
                   {questions[currentQuestionIndex]?.options.map((option, idx) => {
-                    let optionStyle = styles.optionCard;
-                    let optionTextStyle = styles.optionCardText;
-                    
+                    let cardStyle = styles.optionCard;
+                    let textStyle = styles.optionCardText;
                     if (selectedOption !== null) {
-                      if (idx === questions[currentQuestionIndex].correctAnswer) {
-                        optionStyle = [styles.optionCard, styles.correctOptionCard];
-                        optionTextStyle = [styles.optionCardText, styles.correctOptionCardText];
+                      const correct = questions[currentQuestionIndex].correctAnswer;
+                      if (idx === correct) {
+                        cardStyle = [styles.optionCard, styles.correctOptionCard];
+                        textStyle = [styles.optionCardText, styles.correctOptionCardText];
                       } else if (idx === selectedOption) {
-                        optionStyle = [styles.optionCard, styles.wrongOptionCard];
-                        optionTextStyle = [styles.optionCardText, styles.wrongOptionCardText];
+                        cardStyle = [styles.optionCard, styles.wrongOptionCard];
+                        textStyle = [styles.optionCardText, styles.wrongOptionCardText];
                       }
                     }
-
                     return (
                       <TouchableOpacity
                         key={idx}
-                        style={optionStyle}
+                        style={cardStyle}
                         onPress={() => handleOptionSelect(idx)}
                         disabled={selectedOption !== null}
                       >
@@ -349,59 +528,72 @@ export default function LMS() {
                             {String.fromCharCode(65 + idx)}
                           </Text>
                         </View>
-                        <Text style={optionTextStyle}>{option}</Text>
-                        {selectedOption !== null && idx === questions[currentQuestionIndex].correctAnswer && (
-                          <Ionicons name="checkmark-circle" size={24} color="#2E7D32" />
-                        )}
-                        {selectedOption !== null && idx === selectedOption && idx !== questions[currentQuestionIndex].correctAnswer && (
-                          <Ionicons name="close-circle" size={24} color="#C62828" />
-                        )}
+                        <Text style={textStyle}>{option}</Text>
+                        {selectedOption !== null &&
+                          idx === questions[currentQuestionIndex].correctAnswer && (
+                            <Ionicons name="checkmark-circle" size={24} color="#2E7D32" />
+                          )}
+                        {selectedOption !== null &&
+                          idx === selectedOption &&
+                          idx !== questions[currentQuestionIndex].correctAnswer && (
+                            <Ionicons name="close-circle" size={24} color="#C62828" />
+                          )}
                       </TouchableOpacity>
                     );
                   })}
                 </View>
 
                 {selectedOption !== null && (
-                  <TouchableOpacity 
-                    style={styles.nextButton} 
+                  <TouchableOpacity
+                    style={styles.nextButton}
                     onPress={handleNext}
                     disabled={quizLoading}
                   >
-                    <Text style={styles.nextButtonText}>
-                      {currentQuestionIndex === questions.length - 1 ? "Submit Quiz" : "Next Question"}
-                    </Text>
-                    <Ionicons name="arrow-forward" size={18} color="#fff" />
+                    {quizLoading ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <>
+                        <Text style={styles.nextButtonText}>
+                          {currentQuestionIndex === questions.length - 1
+                            ? "Submit Quiz"
+                            : "Next Question"}
+                        </Text>
+                        <Ionicons name="arrow-forward" size={18} color="#fff" />
+                      </>
+                    )}
                   </TouchableOpacity>
                 )}
+                <View style={{ height: 40 }} />
               </ScrollView>
             </View>
-          ) : (
-            // Results View
+          )}
+
+          {/* ── SCREEN 3: Result ── */}
+          {modalScreen === "result" && (
             <View style={styles.resultContainer}>
               <View style={styles.resultCard}>
                 <View style={styles.resultIcon}>
-                  <Ionicons 
-                    name={result?.passed ? "trophy" : "school"} 
-                    size={60} 
-                    color={result?.passed ? "#FFD700" : "#ff7b00"} 
+                  <Ionicons
+                    name={result?.passed ? "trophy" : "school"}
+                    size={60}
+                    color={result?.passed ? "#FFD700" : "#ff7b00"}
                   />
                 </View>
-                
                 <Text style={styles.resultTitle}>
                   {result?.passed ? "Congratulations!" : "Quiz Completed"}
                 </Text>
-                
+
                 <View style={styles.scoreCard}>
                   <Text style={styles.scoreLabel}>Your Score</Text>
                   <Text style={styles.scoreValue}>
                     {score} / {questions.length}
                   </Text>
                   <View style={styles.scoreProgress}>
-                    <View 
+                    <View
                       style={[
-                        styles.scoreProgressFill, 
-                        { width: `${(score / questions.length) * 100}%` }
-                      ]} 
+                        styles.scoreProgressFill,
+                        { width: `${(score / questions.length) * 100}%` },
+                      ]}
                     />
                   </View>
                   <Text style={styles.scorePercentage}>
@@ -412,23 +604,30 @@ export default function LMS() {
                 <View style={styles.resultDetails}>
                   <View style={styles.resultRow}>
                     <Text style={styles.resultLabel}>Status:</Text>
-                    <Text style={[styles.resultValue, { color: result?.passed ? "#2E7D32" : "#C62828" }]}>
+                    <Text
+                      style={[
+                        styles.resultValue,
+                        { color: result?.passed ? "#2E7D32" : "#C62828" },
+                      ]}
+                    >
                       {result?.passed ? "PASSED" : "NOT PASSED"}
                     </Text>
                   </View>
                   <View style={styles.resultRow}>
                     <Text style={styles.resultLabel}>Passing Score:</Text>
-                    <Text style={styles.resultValue}>{selectedCourse?.passingPercentage}%</Text>
+                    <Text style={styles.resultValue}>
+                      {selectedCourse?.passingPercentage}%
+                    </Text>
                   </View>
                 </View>
 
                 <Text style={styles.resultMessage}>
-                  {result?.passed 
-                    ? "🎉 Great job! You've successfully completed this course." 
-                    : "📚 Keep learning! Review the material and try again to improve your score."}
+                  {result?.passed
+                    ? "🎉 Great job! You've successfully completed this course."
+                    : "📚 Keep learning! Review the material and try again."}
                 </Text>
 
-                <TouchableOpacity style={styles.closeQuizButton} onPress={closeQuiz}>
+                <TouchableOpacity style={styles.closeQuizButton} onPress={closeModal}>
                   <Text style={styles.closeQuizButtonText}>Back to Courses</Text>
                 </TouchableOpacity>
               </View>
@@ -441,381 +640,126 @@ export default function LMS() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F7F8FA",
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#F7F8FA",
-  },
-  loadingText: {
-    marginTop: 10,
-    color: "#666",
-    fontSize: 14,
-  },
-  header: {
-    backgroundColor: "#0B2D4A",
-    paddingTop: 60,
-    paddingHorizontal: 20,
-    paddingBottom: 30,
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
-  },
-  smallTitle: {
-    color: "#F5A623",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1,
-  },
-  title: {
-    color: "#fff",
-    fontSize: 30,
-    fontWeight: "bold",
-    marginTop: 6,
-  },
-  subtitle: {
-    color: "#D8DDE5",
-    marginTop: 6,
-  },
-  userName: {
-    color: "#D96A17",
-    fontSize: 12,
-    marginTop: 8,
-    fontWeight: "500",
-  },
-  progressCard: {
-    backgroundColor: "#fff",
-    marginHorizontal: 20,
-    marginTop: -25,
-    borderRadius: 20,
-    padding: 18,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    elevation: 4,
-  },
-  progressLabel: {
-    color: "#777",
-  },
-  progressValue: {
-    fontSize: 34,
-    fontWeight: "bold",
-    color: "#0B2D4A",
-  },
-  circle: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: "#ff7b00",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  statsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginHorizontal: 20,
-    marginTop: 20,
-  },
-  statBox: {
-    flex: 1,
-    backgroundColor: "#fff",
-    padding: 18,
-    marginHorizontal: 4,
-    borderRadius: 16,
-    alignItems: "center",
-  },
-  statNumber: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#ff7b00",
-  },
-  statText: {
-    marginTop: 5,
-    color: "#666",
-  },
-  sectionTitle: {
-    marginTop: 25,
-    marginHorizontal: 20,
-    marginBottom: 12,
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#222",
-  },
-  courseCard: {
-    backgroundColor: "#fff",
-    marginHorizontal: 20,
-    marginBottom: 14,
-    borderRadius: 18,
-    padding: 15,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  courseIcon: {
-    marginRight: 15,
-  },
-  courseInfo: {
-    flex: 1,
-  },
-  courseTitle: {
-    fontWeight: "bold",
-    fontSize: 16,
-  },
-  courseSubtitle: {
-    color: "#777",
-    marginTop: 4,
-    fontSize: 12,
-  },
-  courseMeta: {
-    flexDirection: "row",
-    marginTop: 6,
-    gap: 12,
-  },
-  passingInfo: {
-    color: "#ff7b00",
-    fontSize: 11,
-    fontWeight: "500",
-  },
-  questionCount: {
-    color: "#666",
-    fontSize: 11,
-  },
-  playButton: {
-    backgroundColor: "#ff7b00",
-    width: 45,
-    height: 45,
-    borderRadius: 22,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  // Modal Styles
-  modalContainer: {
-    flex: 1,
-    backgroundColor: "#F7F8FA",
-  },
-  quizContainer: {
-    flex: 1,
-  },
-  quizHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#E5E5E5",
-  },
-  closeButton: {
-    padding: 4,
-  },
-  quizTitle: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#0B2D4A",
-    flex: 1,
-    textAlign: "center",
-  },
-  progressIndicator: {
-    backgroundColor: "#ff7b0010",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  progressText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#ff7b00",
-  },
-  quizContent: {
-    flex: 1,
-    padding: 20,
-  },
-  questionCard: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
-    elevation: 2,
-  },
-  questionNumber: {
-    fontSize: 12,
-    color: "#ff7b00",
-    fontWeight: "600",
-    marginBottom: 10,
-  },
-  questionText: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#0B2D4A",
-    lineHeight: 26,
-  },
-  optionsGrid: {
-    gap: 12,
-  },
-  optionCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E5E5E5",
-  },
-  optionLetter: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: "#F0F0F0",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  optionLetterText: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#666",
-  },
-  optionCardText: {
-    flex: 1,
-    fontSize: 15,
-    color: "#333",
-  },
-  correctOptionCard: {
-    backgroundColor: "#E8F5E9",
-    borderColor: "#2E7D32",
-  },
-  correctOptionCardText: {
-    color: "#2E7D32",
-    fontWeight: "500",
-  },
-  wrongOptionCard: {
-    backgroundColor: "#FFEBEE",
-    borderColor: "#C62828",
-  },
-  wrongOptionCardText: {
-    color: "#C62828",
-    fontWeight: "500",
-  },
-  nextButton: {
-    backgroundColor: "#ff7b00",
-    padding: 16,
-    borderRadius: 12,
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 20,
-  },
-  nextButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
-  resultContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-    backgroundColor: "#F7F8FA",
-  },
-  resultCard: {
-    backgroundColor: "#fff",
-    borderRadius: 24,
-    padding: 24,
-    width: "100%",
-    alignItems: "center",
-    elevation: 4,
-  },
-  resultIcon: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: "#FFF4EC",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  resultTitle: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#0B2D4A",
-    marginBottom: 20,
-  },
-  scoreCard: {
-    backgroundColor: "#F7F8FA",
-    borderRadius: 16,
-    padding: 20,
-    width: "100%",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  scoreLabel: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 8,
-  },
-  scoreValue: {
-    fontSize: 32,
-    fontWeight: "bold",
-    color: "#ff7b00",
-    marginBottom: 12,
-  },
-  scoreProgress: {
-    width: "100%",
-    height: 8,
-    backgroundColor: "#E5E5E5",
-    borderRadius: 4,
-    overflow: "hidden",
-    marginBottom: 8,
-  },
-  scoreProgressFill: {
-    height: "100%",
-    backgroundColor: "#ff7b00",
-    borderRadius: 4,
-  },
-  scorePercentage: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#ff7b00",
-  },
-  resultDetails: {
-    width: "100%",
-    marginBottom: 20,
-  },
-  resultRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 8,
-  },
-  resultLabel: {
-    fontSize: 14,
-    color: "#666",
-  },
-  resultValue: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  resultMessage: {
-    fontSize: 14,
-    color: "#666",
-    textAlign: "center",
-    lineHeight: 20,
-    marginBottom: 24,
-  },
-  closeQuizButton: {
-    backgroundColor: "#ff7b00",
-    paddingHorizontal: 30,
-    paddingVertical: 14,
-    borderRadius: 25,
-    width: "100%",
-    alignItems: "center",
-  },
-  closeQuizButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
+  container: { flex: 1, backgroundColor: "#F7F8FA" },
+  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F7F8FA" },
+  loadingText: { marginTop: 10, color: "#666", fontSize: 14 },
+
+  // Header
+  header: { backgroundColor: "#0B2D4A", paddingTop: 60, paddingHorizontal: 20, paddingBottom: 30, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 },
+  smallTitle: { color: "#F5A623", fontSize: 12, fontWeight: "700", letterSpacing: 1 },
+  title: { color: "#fff", fontSize: 30, fontWeight: "bold", marginTop: 6 },
+  subtitle: { color: "#D8DDE5", marginTop: 6 },
+  userName: { color: "#D96A17", fontSize: 12, marginTop: 8, fontWeight: "500" },
+
+  // Progress card
+  progressCard: { backgroundColor: "#fff", marginHorizontal: 20, marginTop: -25, borderRadius: 20, padding: 18, flexDirection: "row", justifyContent: "space-between", alignItems: "center", elevation: 4 },
+  progressLabel: { color: "#777" },
+  progressValue: { fontSize: 34, fontWeight: "bold", color: "#0B2D4A" },
+  circle: { width: 70, height: 70, borderRadius: 35, backgroundColor: "#ff7b00", justifyContent: "center", alignItems: "center" },
+
+  // Stats
+  statsRow: { flexDirection: "row", justifyContent: "space-between", marginHorizontal: 20, marginTop: 20 },
+  statBox: { flex: 1, backgroundColor: "#fff", padding: 18, marginHorizontal: 4, borderRadius: 16, alignItems: "center" },
+  statNumber: { fontSize: 24, fontWeight: "bold", color: "#ff7b00" },
+  statText: { marginTop: 5, color: "#666" },
+
+  // Course list
+  sectionTitle: { marginTop: 25, marginHorizontal: 20, marginBottom: 12, fontSize: 18, fontWeight: "bold", color: "#222" },
+  courseCard: { backgroundColor: "#fff", marginHorizontal: 20, marginBottom: 14, borderRadius: 18, padding: 15, flexDirection: "row", alignItems: "center" },
+  courseIcon: { marginRight: 15 },
+  courseInfo: { flex: 1 },
+  courseTitle: { fontWeight: "bold", fontSize: 16 },
+  courseSubtitle: { color: "#777", marginTop: 4, fontSize: 12 },
+  courseMeta: { flexDirection: "row", marginTop: 6, gap: 8, flexWrap: "wrap", alignItems: "center" },
+  departmentBadge: { backgroundColor: "#FFF4EC", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+  departmentText: { color: "#ff7b00", fontSize: 10, fontWeight: "600" },
+  passingInfo: { color: "#ff7b00", fontSize: 11, fontWeight: "500" },
+  questionCount: { color: "#666", fontSize: 11 },
+  playButton: { backgroundColor: "#ff7b00", width: 45, height: 45, borderRadius: 22, justifyContent: "center", alignItems: "center" },
+
+  // Modal shared
+  modalContainer: { flex: 1, backgroundColor: "#F7F8FA" },
+
+  // Detail screen
+  detailTopBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 14, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#E5E5E5" },
+  backBtn: { padding: 4 },
+  detailTopTitle: { fontSize: 16, fontWeight: "bold", color: "#0B2D4A", flex: 1, textAlign: "center" },
+  detailScroll: { padding: 20 },
+  
+  statusContainer: { alignItems: "center", marginBottom: 12 },
+  detailStatusBadge: { paddingHorizontal: 14, paddingVertical: 4, borderRadius: 20 },
+  detailStatusText: { fontSize: 12, fontWeight: "700", letterSpacing: 0.5 },
+  
+  detailTitle: { fontSize: 24, fontWeight: "bold", color: "#0B2D4A", textAlign: "center", marginBottom: 6 },
+  detailSubtitle: { fontSize: 14, color: "#777", textAlign: "center", marginBottom: 20 },
+  
+  // Info Container
+  infoContainer: { backgroundColor: "#fff", borderRadius: 12, padding: 16, marginBottom: 16, elevation: 2 },
+  infoRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 8 },
+  infoLabel: { fontSize: 14, color: "#666", fontWeight: "500" },
+  infoValue: { fontSize: 14, color: "#0B2D4A", fontWeight: "600" },
+  infoDivider: { height: 1, backgroundColor: "#F0F0F0" },
+  
+  detailSection: { backgroundColor: "#fff", borderRadius: 12, padding: 16, marginBottom: 16, elevation: 2 },
+  detailSectionTitle: { fontSize: 16, fontWeight: "700", color: "#0B2D4A", marginBottom: 12 },
+  
+  // Content points styles
+  contentPointsContainer: { marginTop: 4 },
+  sectionHeaderContainer: { flexDirection: "row", alignItems: "center", marginVertical: 12, gap: 10 },
+  sectionDivider: { flex: 1, height: 1, backgroundColor: "#E5E5E5" },
+  sectionHeaderText: { fontSize: 15, fontWeight: "700", color: "#0B2D4A" },
+  contentPointItem: { flexDirection: "row", alignItems: "flex-start", marginBottom: 8 },
+  subPointItem: { marginLeft: 20, marginBottom: 4 },
+  contentPointBullet: { marginRight: 10, marginTop: 2 },
+  contentPointText: { flex: 1, fontSize: 14, color: "#444", lineHeight: 20 },
+  contentSubPointText: { flex: 1, fontSize: 13, color: "#666", lineHeight: 19 },
+  contentTextItem: { marginBottom: 8 },
+  contentPlainText: { fontSize: 14, color: "#444", lineHeight: 20 },
+  
+  resourceRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, borderTopWidth: 1, borderTopColor: "#F0F0F0" },
+  resourceText: { flex: 1, fontSize: 14, color: "#333", fontWeight: "500" },
+  startButton: { backgroundColor: "#ff7b00", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 10, paddingVertical: 16, borderRadius: 16, marginTop: 8 },
+  startButtonText: { color: "#fff", fontSize: 17, fontWeight: "bold" },
+
+  // Quiz screen
+  quizContainer: { flex: 1 },
+  quizHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 15, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#E5E5E5" },
+  closeButton: { padding: 4 },
+  quizTitle: { fontSize: 16, fontWeight: "bold", color: "#0B2D4A", flex: 1, textAlign: "center" },
+  progressIndicator: { backgroundColor: "#ff7b0010", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  progressText: { fontSize: 12, fontWeight: "600", color: "#ff7b00" },
+  quizContent: { flex: 1, padding: 20 },
+  questionCard: { backgroundColor: "#fff", borderRadius: 16, padding: 20, marginBottom: 20, elevation: 2 },
+  questionNumber: { fontSize: 12, color: "#ff7b00", fontWeight: "600", marginBottom: 10 },
+  questionText: { fontSize: 18, fontWeight: "bold", color: "#0B2D4A", lineHeight: 26 },
+  optionsGrid: { gap: 12 },
+  optionCard: { backgroundColor: "#fff", borderRadius: 12, padding: 16, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#E5E5E5" },
+  optionLetter: { width: 30, height: 30, borderRadius: 15, backgroundColor: "#F0F0F0", justifyContent: "center", alignItems: "center", marginRight: 12 },
+  optionLetterText: { fontSize: 14, fontWeight: "bold", color: "#666" },
+  optionCardText: { flex: 1, fontSize: 15, color: "#333" },
+  correctOptionCard: { backgroundColor: "#E8F5E9", borderColor: "#2E7D32" },
+  correctOptionCardText: { color: "#2E7D32", fontWeight: "500" },
+  wrongOptionCard: { backgroundColor: "#FFEBEE", borderColor: "#C62828" },
+  wrongOptionCardText: { color: "#C62828", fontWeight: "500" },
+  nextButton: { backgroundColor: "#ff7b00", padding: 16, borderRadius: 12, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8, marginTop: 20 },
+  nextButtonText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
+
+  // Result screen
+  resultContainer: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20 },
+  resultCard: { backgroundColor: "#fff", borderRadius: 24, padding: 24, width: "100%", alignItems: "center", elevation: 4 },
+  resultIcon: { width: 100, height: 100, borderRadius: 50, backgroundColor: "#FFF4EC", justifyContent: "center", alignItems: "center", marginBottom: 20 },
+  resultTitle: { fontSize: 24, fontWeight: "bold", color: "#0B2D4A", marginBottom: 20 },
+  scoreCard: { backgroundColor: "#F7F8FA", borderRadius: 16, padding: 20, width: "100%", alignItems: "center", marginBottom: 20 },
+  scoreLabel: { fontSize: 14, color: "#666", marginBottom: 8 },
+  scoreValue: { fontSize: 32, fontWeight: "bold", color: "#ff7b00", marginBottom: 12 },
+  scoreProgress: { width: "100%", height: 8, backgroundColor: "#E5E5E5", borderRadius: 4, overflow: "hidden", marginBottom: 8 },
+  scoreProgressFill: { height: "100%", backgroundColor: "#ff7b00", borderRadius: 4 },
+  scorePercentage: { fontSize: 14, fontWeight: "600", color: "#ff7b00" },
+  resultDetails: { width: "100%", marginBottom: 20 },
+  resultRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 8 },
+  resultLabel: { fontSize: 14, color: "#666" },
+  resultValue: { fontSize: 14, fontWeight: "600" },
+  resultMessage: { fontSize: 14, color: "#666", textAlign: "center", lineHeight: 20, marginBottom: 24 },
+  closeQuizButton: { backgroundColor: "#ff7b00", paddingHorizontal: 30, paddingVertical: 14, borderRadius: 25, width: "100%", alignItems: "center" },
+  closeQuizButtonText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
 });
