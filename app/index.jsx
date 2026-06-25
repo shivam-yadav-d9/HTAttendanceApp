@@ -6,14 +6,13 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Image,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
 import authService from "../services/auth.service";
 import {
@@ -128,7 +127,7 @@ export default function LoginScreen() {
 
       // REMOVED: Location verification check
       // Users can now login from anywhere without location restriction
-      
+
       console.log("Login attempt from:", username);
 
       // Call OnTrack login API with username (employee number)
@@ -168,11 +167,6 @@ export default function LoginScreen() {
 
       {/* Logo + Brand */}
       <View style={styles.logoContainer}>
-        <Image
-          source={require("../assets/images/logo.png")}
-          style={styles.logo}
-          resizeMode="contain"
-        />
 
         <Text style={styles.brand}>
           <Text style={styles.brandHome}>Home</Text>
