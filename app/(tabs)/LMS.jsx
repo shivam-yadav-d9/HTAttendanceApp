@@ -43,6 +43,7 @@ export default function LMS() {
   const [attemptId, setAttemptId] = useState(null);
   const [quizLoading, setQuizLoading] = useState(false);
   const [result, setResult] = useState(null);
+  const [answeredQuestions, setAnsweredQuestions] = useState({});
 
   useEffect(() => {
     loadUserAndCourses();
@@ -123,6 +124,7 @@ export default function LMS() {
       setSelectedOption(null);
       setScore(0);
       setResult(null);
+      setAnsweredQuestions({});
       setModalScreen("quiz");
     } catch (e) {
       Alert.alert("Error", "Failed to load course content.");
@@ -137,15 +139,35 @@ export default function LMS() {
     if (selectedOption !== null) return;
     setSelectedOption(idx);
     const q = questions[currentQuestionIndex];
-    if (idx === q.correctAnswer) setScore((p) => p + 1);
+    const isCorrect = idx === q.correctAnswer;
+    if (isCorrect) setScore((p) => p + 1);
+    
+    // Store answer
+    setAnsweredQuestions(prev => ({
+      ...prev,
+      [currentQuestionIndex]: { selected: idx, correct: isCorrect }
+    }));
+    
     if (attemptId) await lmsService.submitAnswer(attemptId, q._id, idx);
+  };
+
+  const handlePrevious = () => {
+    if (currentQuestionIndex > 0) {
+      setCurrentQuestionIndex(currentQuestionIndex - 1);
+      // Restore previously selected option for this question
+      const prevAnswer = answeredQuestions[currentQuestionIndex - 1];
+      setSelectedOption(prevAnswer ? prevAnswer.selected : null);
+    }
   };
 
   const handleNext = async () => {
     if (currentQuestionIndex < questions.length - 1) {
-      setCurrentQuestionIndex((p) => p + 1);
-      setSelectedOption(null);
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
+      // Restore previously selected option for the next question
+      const nextAnswer = answeredQuestions[currentQuestionIndex + 1];
+      setSelectedOption(nextAnswer ? nextAnswer.selected : null);
     } else {
+      // Submit quiz
       setQuizLoading(true);
       const submitRes = await lmsService.submitAttempt(attemptId);
       if (submitRes.success && submitRes.data) {
@@ -169,6 +191,7 @@ export default function LMS() {
     setScore(0);
     setAttemptId(null);
     setResult(null);
+    setAnsweredQuestions({});
   };
 
   // ─── Helpers ───────────────────────────────────────────────────────
@@ -354,9 +377,6 @@ export default function LMS() {
               </View>
 
               <ScrollView contentContainerStyle={styles.detailScroll}>
-                {/* Status Badge */}
-            
-
                 {/* Course Title */}
                 <Text style={styles.detailTitle}>{selectedCourse.title}</Text>
                 <Text style={styles.detailSubtitle}>{selectedCourse.description}</Text>
@@ -543,26 +563,49 @@ export default function LMS() {
                   })}
                 </View>
 
-                {selectedOption !== null && (
+                {/* Navigation Buttons - Previous & Next */}
+                <View style={styles.navigationContainer}>
                   <TouchableOpacity
-                    style={styles.nextButton}
-                    onPress={handleNext}
-                    disabled={quizLoading}
+                    style={[
+                      styles.navButton,
+                      styles.prevButton,
+                      currentQuestionIndex === 0 && styles.navButtonDisabled
+                    ]}
+                    onPress={handlePrevious}
+                    disabled={currentQuestionIndex === 0}
                   >
-                    {quizLoading ? (
-                      <ActivityIndicator color="#fff" />
-                    ) : (
-                      <>
-                        <Text style={styles.nextButtonText}>
-                          {currentQuestionIndex === questions.length - 1
-                            ? "Submit Quiz"
-                            : "Next Question"}
-                        </Text>
-                        <Ionicons name="arrow-forward" size={18} color="#fff" />
-                      </>
-                    )}
+                    <Ionicons name="arrow-back" size={18} color={currentQuestionIndex === 0 ? "#ccc" : "#fff"} />
+                    <Text style={[
+                      styles.navButtonText,
+                      currentQuestionIndex === 0 && styles.navButtonTextDisabled
+                    ]}>
+                      Previous
+                    </Text>
                   </TouchableOpacity>
-                )}
+
+                  <TouchableOpacity
+                    style={[
+                      styles.navButton,
+                      styles.nextNavButton,
+                      selectedOption === null && styles.navButtonDisabled
+                    ]}
+                    onPress={handleNext}
+                    disabled={selectedOption === null}
+                  >
+                    <Text style={[
+                      styles.navButtonText,
+                      selectedOption === null && styles.navButtonTextDisabled
+                    ]}>
+                      {currentQuestionIndex === questions.length - 1 ? "Submit" : "Next"}
+                    </Text>
+                    <Ionicons 
+                      name={currentQuestionIndex === questions.length - 1 ? "checkmark" : "arrow-forward"} 
+                      size={18} 
+                      color={selectedOption === null ? "#ccc" : "#fff"} 
+                    />
+                  </TouchableOpacity>
+                </View>
+
                 <View style={{ height: 40 }} />
               </ScrollView>
             </View>
@@ -686,10 +729,6 @@ const styles = StyleSheet.create({
   detailTopTitle: { fontSize: 16, fontWeight: "bold", color: "#0B2D4A", flex: 1, textAlign: "center" },
   detailScroll: { padding: 20 },
   
-  statusContainer: { alignItems: "center", marginBottom: 12 },
-  detailStatusBadge: { paddingHorizontal: 14, paddingVertical: 4, borderRadius: 20 },
-  detailStatusText: { fontSize: 12, fontWeight: "700", letterSpacing: 0.5 },
-  
   detailTitle: { fontSize: 24, fontWeight: "bold", color: "#0B2D4A", textAlign: "center", marginBottom: 6 },
   detailSubtitle: { fontSize: 14, color: "#777", textAlign: "center", marginBottom: 20 },
   
@@ -741,8 +780,40 @@ const styles = StyleSheet.create({
   correctOptionCardText: { color: "#2E7D32", fontWeight: "500" },
   wrongOptionCard: { backgroundColor: "#FFEBEE", borderColor: "#C62828" },
   wrongOptionCardText: { color: "#C62828", fontWeight: "500" },
-  nextButton: { backgroundColor: "#ff7b00", padding: 16, borderRadius: 12, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8, marginTop: 20 },
-  nextButtonText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
+
+  // Navigation buttons
+  navigationContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 20,
+    gap: 12,
+  },
+  navButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+  },
+  prevButton: {
+    backgroundColor: "#0B2D4A",
+  },
+  nextNavButton: {
+    backgroundColor: "#ff7b00",
+  },
+  navButtonDisabled: {
+    opacity: 0.5,
+  },
+  navButtonText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  navButtonTextDisabled: {
+    color: "#ccc",
+  },
 
   // Result screen
   resultContainer: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20 },
