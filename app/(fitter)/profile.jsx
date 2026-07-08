@@ -1,26 +1,21 @@
-import {
-    Alert,
-    View,
-    Text,
-    StyleSheet,
-    StatusBar,
-    ScrollView,
-    TouchableOpacity,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
+import { useEffect, useState } from "react";
+import {
+    ActivityIndicator,
+    Alert,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 const GREEN = "#0B2540";
 const GREEN_LIGHT = "#E7F6EF";
-
-const EMPLOYEE_INFO = [
-    { label: "Employee ID", value: "FT12345" },
-    { label: "Phone", value: "+91 98765 43210" },
-    { label: "Email", value: "fitter@example.com" },
-    { label: "Joined On", value: "01 Jan 2024" },
-];
 
 const SETTINGS = [
     { icon: "lock", label: "Change Password" },
@@ -28,6 +23,49 @@ const SETTINGS = [
 ];
 
 export default function Profile() {
+    const [user, setUser] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        loadUserData();
+    }, []);
+
+    const loadUserData = async () => {
+        try {
+            const userData = await AsyncStorage.getItem("userData");
+            if (userData) {
+                setUser(JSON.parse(userData));
+            } else {
+                router.replace("/");
+            }
+        } catch (error) {
+            console.log("Error loading user data:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const formatDate = (dateString) => {
+        if (!dateString) return "N/A";
+        const date = new Date(dateString);
+        if (isNaN(date)) return "N/A";
+        return date.toLocaleDateString("en-US", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+        });
+    };
+
+    const getInitials = (name) => {
+        if (!name) return "F";
+        return name
+            .split(" ")
+            .map((n) => n[0])
+            .join("")
+            .toUpperCase()
+            .slice(0, 2);
+    };
+
     const handleLogout = () => {
         Alert.alert("Logout", "Are you sure you want to logout?", [
             { text: "Cancel", style: "cancel" },
@@ -39,22 +77,38 @@ export default function Profile() {
                         try {
                             const locationService =
                                 require("../../services/location.service").default;
-
                             locationService?.stopTracking?.();
-                        } catch (e) { }
+                        } catch (e) {}
 
                         await AsyncStorage.clear();
 
                         router.dismissAll();
                         router.replace("/");
-
                     } catch (error) {
                         console.log(error);
                     }
-                }
+                },
             },
         ]);
     };
+
+    if (loading) {
+        return (
+            <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={GREEN} />
+            </View>
+        );
+    }
+
+    const EMPLOYEE_INFO = [
+        { label: "Employee ID", value: user?.employeeNumber || user?._id },
+        { label: "Phone", value: user?.phone?.toString() },
+        { label: "Email", value: user?.email },
+        { label: "Joined On", value: formatDate(user?.dateJoined) },
+        { label: "Department", value: user?.department },
+        { label: "Store / Location", value: user?.location || user?.employeeLocationSAP },
+        { label: "Reporting Manager", value: user?.reportingTo },
+    ];
 
     return (
         <SafeAreaView style={styles.safe}>
@@ -69,10 +123,12 @@ export default function Profile() {
             <ScrollView style={styles.body} contentContainerStyle={{ padding: 16 }}>
                 <View style={styles.card}>
                     <View style={styles.avatarCircle}>
-                        <MaterialIcons name="person" size={36} color={GREEN} />
+                        <Text style={{ fontSize: 24, fontWeight: "800", color: GREEN }}>
+                            {getInitials(user?.name)}
+                        </Text>
                     </View>
-                    <Text style={styles.name}>Fitter User</Text>
-                    <Text style={styles.role}>Fitter</Text>
+                    <Text style={styles.name}>{user?.name || "Fitter User"}</Text>
+                    <Text style={styles.role}>{user?.jobTitle || "Fitter"}</Text>
                     <View style={styles.badge}>
                         <Text style={styles.badgeText}>FITTER</Text>
                     </View>
@@ -89,7 +145,7 @@ export default function Profile() {
                             ]}
                         >
                             <Text style={styles.infoLabel}>{item.label}</Text>
-                            <Text style={styles.infoValue}>{item.value}</Text>
+                            <Text style={styles.infoValue}>{item.value || "N/A"}</Text>
                         </View>
                     ))}
                 </View>
@@ -122,6 +178,7 @@ export default function Profile() {
 
 const styles = StyleSheet.create({
     safe: { flex: 1, backgroundColor: GREEN },
+    loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F3F4F6" },
     header: {
         flexDirection: "row",
         alignItems: "center",
@@ -164,26 +221,12 @@ const styles = StyleSheet.create({
         marginTop: 10,
     },
     badgeText: { color: GREEN, fontSize: 11, fontWeight: "700" },
-    sectionTitle: {
-        fontSize: 15,
-        fontWeight: "700",
-        color: "#111827",
-        marginBottom: 10,
-    },
-    infoRow: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        paddingVertical: 12,
-    },
+    sectionTitle: { fontSize: 15, fontWeight: "700", color: "#111827", marginBottom: 10 },
+    infoRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 12 },
     rowBorder: { borderBottomWidth: 1, borderBottomColor: "#F3F4F6" },
     infoLabel: { fontSize: 13, color: "#9CA3AF" },
-    infoValue: { fontSize: 13, color: "#111827", fontWeight: "600" },
-    settingsRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 12,
-        paddingVertical: 14,
-    },
+    infoValue: { fontSize: 13, color: "#111827", fontWeight: "600", flexShrink: 1, textAlign: "right", marginLeft: 10 },
+    settingsRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 14 },
     settingsLabel: { flex: 1, fontSize: 13, color: "#374151" },
     logoutButton: {
         flexDirection: "row",

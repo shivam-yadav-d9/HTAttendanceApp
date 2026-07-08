@@ -10,6 +10,9 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
+      "config": {
+        "googleMapsApiKey": "AIzaSyCfCfGT5R8kqZmzNNFwb71mTUqwUXOk5ss"
+      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Allow app to access your location.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow app to track your location.",
@@ -36,7 +39,12 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.shivam_yadav_d9.MyApp"
+      "package": "com.shivam_yadav_d9.MyApp",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCfCfGT5R8kqZmzNNFwb71mTUqwUXOk5ss"
+        }
+      }
     },
     "web": {
       "output": "static",

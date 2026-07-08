@@ -1,7 +1,7 @@
 import { Tabs } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useEffect, useRef } from "react";
-import fitterLocationService from "../../services/fitterLocation.service";
+import locationService from "../../services/location.service";
 
 export default function FitterLayout() {
   const startedRef = useRef(false);
@@ -9,10 +9,11 @@ export default function FitterLayout() {
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
-    fitterLocationService.startTracking();
+
+    locationService.startTracking();
 
     return () => {
-      fitterLocationService.stopTracking();
+      locationService.stopTracking();
     };
   }, []);
 
@@ -22,7 +23,10 @@ export default function FitterLayout() {
         headerShown: false,
         tabBarActiveTintColor: "#0F7A5C",
         tabBarInactiveTintColor: "#9CA3AF",
-        tabBarLabelStyle: { fontSize: 12, fontWeight: "600" },
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: "600",
+        },
       }}
     >
       <Tabs.Screen
@@ -30,25 +34,39 @@ export default function FitterLayout() {
         options={{
           title: "Attendance",
           tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="how-to-reg" color={color} size={size} />
+            <MaterialIcons
+              name="how-to-reg"
+              color={color}
+              size={size}
+            />
           ),
         }}
       />
+
       <Tabs.Screen
-        name="tasks"
+        name="tracking"
         options={{
-          title: "Tasks",
+          title: "Tracking",
           tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="assignment" color={color} size={size} />
+            <MaterialIcons
+              name="assignment"
+              color={color}
+              size={size}
+            />
           ),
         }}
       />
+
       <Tabs.Screen
         name="profile"
         options={{
           title: "Profile",
           tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="person" color={color} size={size} />
+            <MaterialIcons
+              name="person"
+              color={color}
+              size={size}
+            />
           ),
         }}
       />

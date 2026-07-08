@@ -137,68 +137,54 @@ export default function LoginScreen() {
       setChecking(true);
 
       // ==========================
-      // FITTER LOGIN
+      // LOGIN USING API
       // ==========================
-      if (
-        username.toLowerCase() === "fitter" &&
-        password === "Password@123"
-      ) {
-        await AsyncStorage.setItem("role", "fitter");
-        await AsyncStorage.setItem("userToken", "fitter-token");
+      const result = await authService.login(username, password);
 
-        await AsyncStorage.setItem(
-          "userData",
-          JSON.stringify({
-            name: "Fitter",
-            role: "fitter",
-          })
-        );
+      if (!result.success) {
+        Alert.alert("Login Failed", result.message);
+        return;
+      }
+
+      const user = result.user;
+
+      // Save credentials
+      await AsyncStorage.setItem(
+        "savedCredentials",
+        JSON.stringify({ username, password })
+      );
+
+      const jobTitle = (user.jobTitle || "").toUpperCase();
+
+      // FITTER
+      if (jobTitle === "FITTER") {
+        await AsyncStorage.setItem("role", "fitter");
+
+        Alert.alert("Success", `Welcome ${user.name}`);
 
         router.replace("/(fitter)/attendance");
         return;
       }
 
-      // ==========================
-      // DELIVERY LOGIN
-      // ==========================
+      // DELIVERY
       if (
-        username.toLowerCase() === "delivery" &&
-        password === "Password@123"
+        jobTitle === "LOGISTICS EXECUTIVE" ||
+        jobTitle === "DELIVERY EXECUTIVE"
       ) {
         await AsyncStorage.setItem("role", "delivery");
-        await AsyncStorage.setItem("userToken", "delivery-token");
 
-        await AsyncStorage.setItem(
-          "userData",
-          JSON.stringify({
-            name: "Delivery",
-            role: "delivery",
-          })
-        );
+        Alert.alert("Success", `Welcome ${user.name}`);
 
         router.replace("/(delivery)/attendance");
         return;
       }
 
-      // ==========================
-      // STAFF LOGIN (EXISTING)
-      // ==========================
-      const result = await authService.login(username, password);
+      // STAFF
+      await AsyncStorage.setItem("role", "staff");
 
-      if (result.success) {
-        await AsyncStorage.setItem("role", "staff");
+      Alert.alert("Success", `Welcome ${user.name}`);
 
-        await AsyncStorage.setItem(
-          "savedCredentials",
-          JSON.stringify({ username, password })
-        );
-
-        Alert.alert("Success", `Welcome ${result.user.name}!`);
-
-        router.replace("/(tabs)/home");
-      } else {
-        Alert.alert("Login Failed", result.message);
-      }
+      router.replace("/(tabs)/home");
 
     } catch (error) {
       console.log(error);
