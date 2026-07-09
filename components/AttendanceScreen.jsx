@@ -1,8 +1,4 @@
-// app/(tabs)/attend.jsx
-//
-// ⚠️  This screen does NOT own tracking — _layout.jsx does.
-//     attend.jsx only LISTENS to events and reads data.
-//     Never call locationService.startTracking() or stopTracking() here.
+
 
 import { MaterialIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -123,6 +119,18 @@ export default function Attend() {
   const loadFromCache = useCallback(async () => {
     try {
       // Use whatever attendanceService already has in memory
+      const userData = await AsyncStorage.getItem("userData");
+      const user = JSON.parse(userData);
+
+      if (attendanceService.cachedEmployeeNumber !== user.employeeNumber) {
+        attendanceService.clearAll();
+
+        setCurrentStatus("CHECKED_OUT");
+        setTodayAttendance(null);
+        setActiveCheckIn(null);
+        setAttendanceHistory([]);
+      }
+
       const cachedStatus = attendanceService.statusCache;
       const cachedOpenSession = attendanceService.openSessionCheckIn;
 
@@ -181,6 +189,7 @@ export default function Attend() {
 
       let status;
       if (
+        attendanceService.cachedEmployeeNumber === employeeNumber &&
         attendanceService.statusCache !== null &&
         Date.now() - attendanceService.statusCacheTime <
         attendanceService.STATUS_CACHE_TTL

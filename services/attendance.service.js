@@ -11,11 +11,13 @@ class AttendanceService {
         // we store the open session's checkIn timestamp here.
         // getCurrentStatus uses this to override a stale aggregated history response.
         this.openSessionCheckIn = null; // ISO string | null
+        this.cachedEmployeeNumber = null;
     }
 
-    setStatusCache(status, openSessionCheckIn = null) {
+    setStatusCache(employeeNumber, status, openSessionCheckIn = null) {
         this.statusCache = status;
         this.statusCacheTime = Date.now();
+        this.cachedEmployeeNumber = employeeNumber;
         if (status === 'CHECKED_IN' && openSessionCheckIn) {
             this.openSessionCheckIn = openSessionCheckIn;
         } else if (status === 'CHECKED_OUT') {
@@ -36,6 +38,7 @@ class AttendanceService {
         this.statusCache = null;
         this.statusCacheTime = 0;
         this.openSessionCheckIn = null;
+        this.cachedEmployeeNumber = null;
         console.log('[AttendanceService] All cache cleared');
     }
 
@@ -80,8 +83,7 @@ class AttendanceService {
             if (response.data?.action === 'ALREADY_CHECKED_IN') {
                 console.log('[AttendanceService] Already checked in — session is OPEN');
                 // Store the open session checkIn so getCurrentStatus can use it
-                this.setStatusCache('CHECKED_IN', openCheckIn);
-                return {
+                this.setStatusCache(employeeNumber, "CHECKED_IN", openCheckIn); return {
                     success: true,
                     data: response.data,
                     message: 'Already checked in',
@@ -90,7 +92,7 @@ class AttendanceService {
             }
 
             if (response.success) {
-                this.setStatusCache('CHECKED_IN', openCheckIn);
+                this.setStatusCache(employeeNumber, "CHECKED_IN", openCheckIn);
             }
 
             return {
@@ -121,7 +123,7 @@ class AttendanceService {
 
             if (response.success) {
                 // Clear open session on checkout
-                this.setStatusCache('CHECKED_OUT');
+                this.setStatusCache(employeeNumber, "CHECKED_OUT");
             }
 
             return {
@@ -175,6 +177,7 @@ class AttendanceService {
         try {
             // ── 1. Fresh TTL cache — most authoritative ──────────────────────────
             if (
+                this.cachedEmployeeNumber === employeeNumber &&
                 this.statusCache !== null &&
                 (Date.now() - this.statusCacheTime) < this.STATUS_CACHE_TTL
             ) {

@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import attendanceService from "../../services/attendance.service";
 
 export default function Profile() {
   const [user, setUser] = useState(null);
@@ -38,9 +39,28 @@ export default function Profile() {
           text: "Logout",
           style: "destructive",
           onPress: async () => {
-            await AsyncStorage.multiRemove(["userToken", "userData", "savedCredentials", "employeeNumber"]);
-            router.replace("/");
-          },
+            try {
+              attendanceService.clearAll();
+
+              try {
+                const locationService =
+                  require("../../services/location.service").default;
+                locationService?.stopTracking?.();
+              } catch (e) { }
+
+              await AsyncStorage.multiRemove([
+                "userToken",
+                "userData",
+                "savedCredentials",
+                "employeeNumber",
+              ]);
+
+              router.dismissAll();
+              router.replace("/");
+            } catch (error) {
+              console.log(error);
+            }
+          }
         },
       ]
     );
@@ -79,7 +99,7 @@ export default function Profile() {
         </View>
         <Text style={styles.name}>{user?.name || "N/A"}</Text>
         <Text style={styles.designation}>{user?.jobTitle || user?.role || "Employee"}</Text>
-     
+
       </View>
 
       {/* Store & Manager Section */}
@@ -143,9 +163,9 @@ function InfoRow({ icon, label, value }) {
 }
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: "#F3EEE8" 
+  container: {
+    flex: 1,
+    backgroundColor: "#F3EEE8"
   },
   loadingContainer: {
     flex: 1,
@@ -162,28 +182,28 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 25,
   },
   avatar: {
-    width: 70, 
-    height: 70, 
+    width: 70,
+    height: 70,
     borderRadius: 45,
     backgroundColor: "#E67821",
-    justifyContent: "center", 
+    justifyContent: "center",
     alignItems: "center",
   },
-  avatarText: { 
-    color: "#fff", 
-    fontSize: 30, 
-    fontWeight: "bold" 
+  avatarText: {
+    color: "#fff",
+    fontSize: 30,
+    fontWeight: "bold"
   },
-  name: { 
-    color: "#fff", 
-    fontSize: 22, 
-    fontWeight: "bold", 
-    marginTop: 12 
+  name: {
+    color: "#fff",
+    fontSize: 22,
+    fontWeight: "bold",
+    marginTop: 12
   },
-  designation: { 
-    color: "#D7DFEA", 
-    fontSize: 15, 
-    marginTop: 4 
+  designation: {
+    color: "#D7DFEA",
+    fontSize: 15,
+    marginTop: 4
   },
   statusBadge: {
     flexDirection: "row",
@@ -206,46 +226,46 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   card: {
-    backgroundColor: "#fff", 
-    marginHorizontal: 16, 
+    backgroundColor: "#fff",
+    marginHorizontal: 16,
     marginTop: 11,
-    borderRadius: 18, 
-    padding: 16, 
+    borderRadius: 18,
+    padding: 16,
     elevation: 3,
   },
-  cardTitle: { 
-    fontSize: 18, 
-    fontWeight: "bold", 
-    color: "#0F2D52", 
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#0F2D52",
     marginBottom: 15,
     borderBottomWidth: 1,
     borderBottomColor: "#E5E7EB",
     paddingBottom: 8,
   },
-  infoRow: { 
-    flexDirection: "row", 
-    alignItems: "center", 
+  infoRow: {
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 12,
     flexWrap: "wrap",
   },
   iconBox: {
-    width: 32, 
-    height: 32, 
+    width: 32,
+    height: 32,
     borderRadius: 8,
     backgroundColor: "#EEF3F8",
-    justifyContent: "center", 
-    alignItems: "center", 
+    justifyContent: "center",
+    alignItems: "center",
     marginRight: 10,
   },
-  infoLabel: { 
-    fontSize: 13, 
+  infoLabel: {
+    fontSize: 13,
     color: "#666",
     width: 110,
     fontWeight: "500",
   },
-  infoValue: { 
-    fontSize: 13, 
-    fontWeight: "600", 
+  infoValue: {
+    fontSize: 13,
+    fontWeight: "600",
     color: "#222",
     flex: 1,
     textAlign: "right",
@@ -277,9 +297,9 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     elevation: 3,
   },
-  logoutText: { 
-    color: "#fff", 
-    fontSize: 15, 
-    fontWeight: "700" 
+  logoutText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "700"
   },
 });

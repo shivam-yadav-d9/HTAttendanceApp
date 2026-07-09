@@ -2,6 +2,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
+import attendanceService from "../../services/attendance.service";
 import {
     ActivityIndicator,
     Alert,
@@ -78,10 +79,11 @@ export default function Profile() {
                             const locationService =
                                 require("../../services/location.service").default;
                             locationService?.stopTracking?.();
-                        } catch (e) {}
+                        } catch (e) { }
+
+                        attendanceService.clearAll();
 
                         await AsyncStorage.clear();
-
                         router.dismissAll();
                         router.replace("/");
                     } catch (error) {
