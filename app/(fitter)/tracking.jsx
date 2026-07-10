@@ -4,6 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { MaterialIcons } from "@expo/vector-icons";
 import eventEmitter from "@/services/eventEmitter";
+import { getRoute } from "@/services/route.service";
 import {
   saveLocation,
   getLastLocation,
@@ -41,6 +42,7 @@ export default function Tracking() {
   const mapRef = useRef(null);
   const lastSavedAtRef = useRef(0);
   const initialDistanceRef = useRef(null);
+  const [routeCoordinates, setRouteCoordinates] = useState([]);
 
   const [currentLocation, setCurrentLocation] = useState(null);
   const [trail, setTrail] = useState([]);
@@ -53,12 +55,17 @@ export default function Tracking() {
         getLastLocation(ROLE),
         getTrail(ROLE),
       ]);
-      if (loc) {
-        setCurrentLocation(loc);
-        const d = distanceMeters(loc, DESTINATION);
-        setDistance(d);
-        initialDistanceRef.current = d;
-      }
+if (loc) {
+  setCurrentLocation(loc);
+
+  // Fetch road route
+  const route = await getRoute(loc, DESTINATION);
+  setRouteCoordinates(route.coordinates);
+
+  const d = distanceMeters(loc, DESTINATION);
+  setDistance(d);
+  initialDistanceRef.current = d;
+}
       if (savedTrail) setTrail(savedTrail);
     })();
   }, []);
@@ -71,6 +78,9 @@ export default function Tracking() {
     const coords = { latitude: loc.latitude, longitude: loc.longitude };
     const { payload, trail: nextTrail } = await saveLocation(ROLE, coords);
     setCurrentLocation(payload);
+    const route = await getRoute(payload, DESTINATION);
+
+setRouteCoordinates(route.coordinates);
     setTrail(nextTrail);
 
     const d = distanceMeters(payload, DESTINATION);
@@ -137,9 +147,13 @@ export default function Tracking() {
             longitudeDelta: 0.02,
           }}
         >
-          {trail.length > 1 && (
-            <Polyline coordinates={trail} strokeColor={GREEN} strokeWidth={4} />
-          )}
+{routeCoordinates.length > 0 && (
+  <Polyline
+    coordinates={routeCoordinates}
+    strokeColor="#4285F4"
+    strokeWidth={5}
+  />
+)}
 
           {currentLocation && (
             <Marker coordinate={currentLocation} anchor={{ x: 0.5, y: 0.5 }}>
