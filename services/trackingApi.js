@@ -1,5 +1,4 @@
-const BASE_URL = "http://10.249.35.193:5001/api";
-
+const BASE_URL = "https://tracking-backend-s1bw.onrender.com/api";
 const trackingApi = {
   async request(endpoint, options = {}) {
     try {
