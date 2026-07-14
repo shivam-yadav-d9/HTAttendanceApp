@@ -11,9 +11,12 @@ import {
   calculateEta,
 } from "@/services/liveTracking.service";
 
+import TrackingBackendService from "@/services/trackingBackend.service";
+
+
 const ROLE = "delivery";
 const UPDATE_INTERVAL_MS = 60 * 1000; // 1 min
-const DESTINATION = { latitude: 19.137031, longitude: 72.862710 }; // customer address
+const DESTINATION = { latitude: 19.119800, longitude: 72.911100 };  // customer address
 
 const ORDER_STATUSES = [
   { key: "placed", label: "Order Placed" },
@@ -39,17 +42,17 @@ export default function Tracking() {
         getLastLocation(ROLE),
         getTrail(ROLE),
       ]);
- if (loc) {
-  setCurrentLocation(loc);
+      if (loc) {
+        setCurrentLocation(loc);
 
-  // Fetch road route
-  const route = await getRoute(loc, DESTINATION);
-  setRouteCoordinates(route.coordinates);
+        // Fetch road route
+        const route = await getRoute(loc, DESTINATION);
+        setRouteCoordinates(route.coordinates);
 
-  const d = distanceMeters(loc, DESTINATION);
-  setDistance(d);
-  initialDistanceRef.current = d;
-}
+        const d = distanceMeters(loc, DESTINATION);
+        setDistance(d);
+        initialDistanceRef.current = d;
+      }
       if (savedTrail) setTrail(savedTrail);
     })();
   }, []);
@@ -61,10 +64,18 @@ export default function Tracking() {
 
     const coords = { latitude: loc.latitude, longitude: loc.longitude };
     const { payload, trail: nextTrail } = await saveLocation(ROLE, coords);
+    const response = await TrackingBackendService.updateLocation({
+      employeeId: "DELIVERY001",
+      orderId: "ORD500",
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+    });
+
+    console.log("Tracking Response:", response);
     setCurrentLocation(payload);
     const route = await getRoute(payload, DESTINATION);
 
-setRouteCoordinates(route.coordinates);
+    setRouteCoordinates(route.coordinates);
     setTrail(nextTrail);
 
     const d = distanceMeters(payload, DESTINATION);
@@ -99,14 +110,14 @@ setRouteCoordinates(route.coordinates);
     distance == null
       ? "placed"
       : distance < 50
-      ? "delivered"
-      : distance < 300
-      ? "arriving"
-      : progress > 0.3
-      ? "on_the_way"
-      : progress > 0.05
-      ? "picked_up"
-      : "placed";
+        ? "delivered"
+        : distance < 300
+          ? "arriving"
+          : progress > 0.3
+            ? "on_the_way"
+            : progress > 0.05
+              ? "picked_up"
+              : "placed";
 
   const statusIndex = ORDER_STATUSES.findIndex((s) => s.key === currentStatus);
   const eta = distance != null ? calculateEta(distance) : null;
@@ -124,13 +135,13 @@ setRouteCoordinates(route.coordinates);
           longitudeDelta: 0.02,
         }}
       >
-    {routeCoordinates.length > 0 && (
-    <Polyline
-        coordinates={routeCoordinates}
-        strokeColor="#4285F4"
-        strokeWidth={5}
-    />
-)}
+        {routeCoordinates.length > 0 && (
+          <Polyline
+            coordinates={routeCoordinates}
+            strokeColor="#4285F4"
+            strokeWidth={5}
+          />
+        )}
 
         {currentLocation && (
           <Marker coordinate={currentLocation} anchor={{ x: 0.5, y: 0.5 }}>

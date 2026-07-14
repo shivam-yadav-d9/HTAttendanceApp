@@ -1,16 +1,43 @@
-import polyline from "@mapbox/polyline";
+import { decode } from "@googlemaps/polyline-codec";
 
-const GOOGLE_API_KEY = "AIzaSyCfCfGT5R8kqZmzNNFwb71mTUqwUXOk5ss";
-
+const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 export const getRoute = async (origin, destination) => {
   try {
     const response = await fetch(
-      `https://maps.googleapis.com/maps/api/directions/json?origin=${origin.latitude},${origin.longitude}&destination=${destination.latitude},${destination.longitude}&mode=driving&key=${GOOGLE_API_KEY}`
+      "https://routes.googleapis.com/directions/v2:computeRoutes",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": GOOGLE_API_KEY,
+          "X-Goog-FieldMask":
+            "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline",
+        },
+        body: JSON.stringify({
+          origin: {
+            location: {
+              latLng: {
+                latitude: origin.latitude,
+                longitude: origin.longitude,
+              },
+            },
+          },
+          destination: {
+            location: {
+              latLng: {
+                latitude: destination.latitude,
+                longitude: destination.longitude,
+              },
+            },
+          },
+          travelMode: "DRIVE",
+        }),
+      }
     );
 
     const data = await response.json();
 
-    console.log("Google Directions Response:", data);
+    console.log("Routes API Response:", JSON.stringify(data, null, 2));
 
     if (!data.routes || data.routes.length === 0) {
       return {
@@ -22,7 +49,7 @@ export const getRoute = async (origin, destination) => {
 
     const route = data.routes[0];
 
-    const decoded = polyline.decode(route.overview_polyline.points);
+    const decoded = decode(route.polyline.encodedPolyline);
 
     const coordinates = decoded.map(([latitude, longitude]) => ({
       latitude,
@@ -31,11 +58,11 @@ export const getRoute = async (origin, destination) => {
 
     return {
       coordinates,
-      distance: route.legs[0].distance.value,
-      duration: route.legs[0].duration.value,
+      distance: route.distanceMeters,
+      duration: parseInt(route.duration.replace("s", "")),
     };
   } catch (error) {
-    console.log("Route Error:", error);
+    console.log("Routes API Error:", error);
 
     return {
       coordinates: [],

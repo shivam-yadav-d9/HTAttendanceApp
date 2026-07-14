@@ -1,4 +1,3 @@
-// app/(staff)/_layout.jsx  (or wherever user lands after login)
 import { Stack } from "expo-router";
 import { useEffect } from "react";
 import locationService from "../services/location.service";

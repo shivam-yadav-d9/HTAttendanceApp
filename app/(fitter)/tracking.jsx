@@ -13,6 +13,8 @@ import {
   calculateEta,
 } from "@/services/liveTracking.service";
 
+import TrackingBackendService from "@/services/trackingBackend.service";
+
 const NAVY = "#0B2540";
 const GREEN = "#0F7A5C";
 const ORANGE = "#EA7A1E";
@@ -55,17 +57,17 @@ export default function Tracking() {
         getLastLocation(ROLE),
         getTrail(ROLE),
       ]);
-if (loc) {
-  setCurrentLocation(loc);
+      if (loc) {
+        setCurrentLocation(loc);
 
-  // Fetch road route
-  const route = await getRoute(loc, DESTINATION);
-  setRouteCoordinates(route.coordinates);
+        // Fetch road route
+        const route = await getRoute(loc, DESTINATION);
+        setRouteCoordinates(route.coordinates);
 
-  const d = distanceMeters(loc, DESTINATION);
-  setDistance(d);
-  initialDistanceRef.current = d;
-}
+        const d = distanceMeters(loc, DESTINATION);
+        setDistance(d);
+        initialDistanceRef.current = d;
+      }
       if (savedTrail) setTrail(savedTrail);
     })();
   }, []);
@@ -75,17 +77,40 @@ if (loc) {
     if (now - lastSavedAtRef.current < UPDATE_INTERVAL_MS) return; // throttle to 1/min
     lastSavedAtRef.current = now;
 
-    const coords = { latitude: loc.latitude, longitude: loc.longitude };
-    const { payload, trail: nextTrail } = await saveLocation(ROLE, coords);
-    setCurrentLocation(payload);
-    const route = await getRoute(payload, DESTINATION);
+    const coords = {
+      latitude: loc.latitude,
+      longitude: loc.longitude,
+    };
 
-setRouteCoordinates(route.coordinates);
+    const { payload, trail: nextTrail } = await saveLocation(ROLE, coords);
+
+    // Send location to MongoDB
+    try {
+      const response = await TrackingBackendService.updateLocation({
+        employeeId: "FITTER001", // Hardcoded for now
+        orderId: "ORD500",    // Hardcoded for now
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+      });
+
+      console.log("MongoDB Response:", response);
+    } catch (error) {
+      console.error("Tracking API Error:", error);
+    }
+
+    setCurrentLocation(payload);
+
+    const route = await getRoute(payload, DESTINATION);
+    setRouteCoordinates(route.coordinates);
+
     setTrail(nextTrail);
 
     const d = distanceMeters(payload, DESTINATION);
     setDistance(d);
-    if (initialDistanceRef.current == null) initialDistanceRef.current = d;
+
+    if (initialDistanceRef.current == null) {
+      initialDistanceRef.current = d;
+    }
   }, []);
 
   useEffect(() => {
@@ -115,12 +140,12 @@ setRouteCoordinates(route.coordinates);
     distance == null
       ? "assigned"
       : distance < 50
-      ? "completed"
-      : distance < 300
-      ? "arrived"
-      : progress > 0.05
-      ? "en_route"
-      : "assigned";
+        ? "completed"
+        : distance < 300
+          ? "arrived"
+          : progress > 0.05
+            ? "en_route"
+            : "assigned";
 
   const statusIndex = JOB_STATUSES.findIndex((s) => s.key === currentStatusKey);
   const eta = distance != null ? calculateEta(distance) : null;
@@ -147,13 +172,13 @@ setRouteCoordinates(route.coordinates);
             longitudeDelta: 0.02,
           }}
         >
-{routeCoordinates.length > 0 && (
-  <Polyline
-    coordinates={routeCoordinates}
-    strokeColor="#4285F4"
-    strokeWidth={5}
-  />
-)}
+          {routeCoordinates.length > 0 && (
+            <Polyline
+              coordinates={routeCoordinates}
+              strokeColor="#4285F4"
+              strokeWidth={5}
+            />
+          )}
 
           {currentLocation && (
             <Marker coordinate={currentLocation} anchor={{ x: 0.5, y: 0.5 }}>

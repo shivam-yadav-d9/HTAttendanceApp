@@ -47,8 +47,9 @@ export default function LoginScreen() {
         return;
       }
 
-      if (token && userData) {
+      if (role === "staff") {
         router.replace("/(tabs)/home");
+        return;
       }
     } catch (error) {
       console.log(error);
@@ -89,8 +90,19 @@ export default function LoginScreen() {
               const result = await authService.login(savedUsername, savedPassword);
 
               if (result.success) {
-                if (subscription) subscription.remove();
-                router.replace("/(tabs)/home");
+                const user = result.user;
+                const jobTitle = (user.jobTitle || "").toUpperCase();
+
+                if (jobTitle === "FITTER") {
+                  router.replace("/(fitter)/attendance");
+                } else if (
+                  jobTitle === "LOGISTICS EXECUTIVE" ||
+                  jobTitle === "DELIVERY EXECUTIVE"
+                ) {
+                  router.replace("/(delivery)/attendance");
+                } else {
+                  router.replace("/(tabs)/home");
+                }
               }
             } catch (e) {
               console.log("Auto login error:", e);

@@ -49,14 +49,14 @@ export default function Profile() {
               } catch (e) { }
 
               await AsyncStorage.multiRemove([
+                "role",
                 "userToken",
                 "userData",
                 "savedCredentials",
                 "employeeNumber",
               ]);
 
-              router.dismissAll();
-              router.replace("/");
+            router.replace("/");
             } catch (error) {
               console.log(error);
             }
