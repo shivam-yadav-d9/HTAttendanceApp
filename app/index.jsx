@@ -33,24 +33,28 @@ export default function LoginScreen() {
 
   const checkExistingLogin = async () => {
     try {
-      const role = await AsyncStorage.getItem("role");
       const token = await AsyncStorage.getItem("userToken");
       const userData = await AsyncStorage.getItem("userData");
 
-      if (role === "fitter") {
+      if (!token || !userData) return;
+
+      const user = JSON.parse(userData);
+      const jobTitle = (user.jobTitle || "").toUpperCase();
+
+      if (jobTitle === "FITTER") {
         router.replace("/(fitter)/attendance");
         return;
       }
 
-      if (role === "delivery") {
+      if (
+        jobTitle === "LOGISTICS EXECUTIVE" ||
+        jobTitle === "DELIVERY EXECUTIVE"
+      ) {
         router.replace("/(delivery)/attendance");
         return;
       }
 
-      if (role === "staff") {
-        router.replace("/(tabs)/home");
-        return;
-      }
+      router.replace("/(tabs)/home");
     } catch (error) {
       console.log(error);
     }
@@ -170,7 +174,6 @@ export default function LoginScreen() {
 
       // FITTER
       if (jobTitle === "FITTER") {
-        await AsyncStorage.setItem("role", "fitter");
 
         Alert.alert("Success", `Welcome ${user.name}`);
 
@@ -183,7 +186,6 @@ export default function LoginScreen() {
         jobTitle === "LOGISTICS EXECUTIVE" ||
         jobTitle === "DELIVERY EXECUTIVE"
       ) {
-        await AsyncStorage.setItem("role", "delivery");
 
         Alert.alert("Success", `Welcome ${user.name}`);
 
@@ -192,7 +194,6 @@ export default function LoginScreen() {
       }
 
       // STAFF
-      await AsyncStorage.setItem("role", "staff");
 
       Alert.alert("Success", `Welcome ${user.name}`);
 
