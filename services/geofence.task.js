@@ -109,16 +109,22 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
     const wasInside = await getWasInside(); // null | true | false
 
     // ── Fetch status ──────────────────────────────────────────────────────────
+    // ✅ FIX: this task runs in a headless JS isolate on Android — a plain
+    // `attendanceService.statusCache` read is ALWAYS empty here because that's
+    // a fresh instance, not the one the foreground app is using. That was
+    // causing a full getAttendanceHistory() API call on every single GPS tick.
+    // getCachedStatus() hydrates the TTL cache from AsyncStorage first, so a
+    // status set by the foreground app (or a previous bg tick) is actually
+    // visible here, and we only hit the API on a genuine cache miss.
     let isCheckedIn = false;
     let historyData = [];
 
     try {
-        const cachedStatus = attendanceService.statusCache;
-        const cacheAge = now - attendanceService.statusCacheTime;
+        const cachedStatus = await attendanceService.getCachedStatus(employeeNumber); // ✅ CHANGED
 
-        if (cachedStatus !== null && cacheAge < attendanceService.STATUS_CACHE_TTL) {
+        if (cachedStatus !== null) {
             isCheckedIn = cachedStatus === 'CHECKED_IN';
-            console.log(`[BgTask] Status from cache: ${cachedStatus}`);
+            console.log(`[BgTask] Status from persisted cache: ${cachedStatus}`);
         } else {
             const history = await attendanceService.getAttendanceHistory(employeeNumber);
             historyData = history.data || [];
@@ -147,7 +153,16 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
                 return;
             }
 
-            isCheckedIn = attendanceService._deriveStatus(history) === 'CHECKED_IN';
+            const derivedStatus = attendanceService._deriveStatus(history);
+            isCheckedIn = derivedStatus === 'CHECKED_IN';
+
+            // ✅ NEW: persist what we just derived so the NEXT tick — even in a
+            // brand-new isolate — hits the cache instead of the API again.
+            await attendanceService.setStatusCache(
+                employeeNumber,
+                derivedStatus,
+                attendanceService.openSessionCheckIn
+            );
         }
     } catch (e) {
         console.error('[BgTask] Could not get status:', e);
@@ -185,8 +200,8 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
             }));
             await setLastActionTimes({ ...cooldowns, lastCheckIn: now });
 
-            // ✅ NEW: fire a real push notification — this is what shows up
-            // even when the app is fully killed, because this task runs headless.
+            // ✅ Fires a real push notification — shows up even when the app is
+            // fully killed, because this task runs headless.
             if (result.success && !result.alreadyCheckedIn) {
                 await notificationService.notifyCheckIn(new Date());
             }
@@ -218,7 +233,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
             }));
             await setLastActionTimes({ ...cooldowns, lastCheckOut: now });
 
-            // ✅ NEW: fire a real push notification on checkout too
+            // ✅ Fires a real push notification on checkout too
             if (result.success) {
                 await notificationService.notifyCheckOut(new Date(), durationMinutes);
             }

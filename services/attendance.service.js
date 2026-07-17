@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from './api';
 
+const STATUS_CACHE_KEY = 'attendanceStatusCache'; // ✅ NEW — persists cache across JS isolates (headless bg task)
+
 class AttendanceService {
     constructor() {
         this.statusCache = null;        // 'CHECKED_IN' | 'CHECKED_OUT'
@@ -12,9 +14,60 @@ class AttendanceService {
         // getCurrentStatus uses this to override a stale aggregated history response.
         this.openSessionCheckIn = null; // ISO string | null
         this.cachedEmployeeNumber = null;
+
+        this._hydrated = false; // ✅ NEW — whether this isolate has loaded the persisted cache yet
     }
 
-    setStatusCache(employeeNumber, status, openSessionCheckIn = null) {
+    // ── ✅ NEW: pull the persisted cache into this isolate (once) ─────────────
+    // Every headless background-task invocation gets a fresh AttendanceService
+    // instance with empty in-memory state. Without this, the TTL cache below
+    // is useless in the background and every tick re-fetches history.
+    async hydrateStatusCache() {
+        if (this._hydrated) return;
+        this._hydrated = true;
+        try {
+            const raw = await AsyncStorage.getItem(STATUS_CACHE_KEY);
+            if (!raw) return;
+            const parsed = JSON.parse(raw);
+            this.statusCache = parsed.statusCache ?? null;
+            this.statusCacheTime = parsed.statusCacheTime ?? 0;
+            this.openSessionCheckIn = parsed.openSessionCheckIn ?? null;
+            this.cachedEmployeeNumber = parsed.cachedEmployeeNumber ?? null;
+            console.log(`[AttendanceService] Hydrated cache from storage: ${this.statusCache}`);
+        } catch (e) {
+            console.log('[AttendanceService] Hydrate error (non-fatal):', e);
+        }
+    }
+
+    async _persist() {
+        try {
+            await AsyncStorage.setItem(STATUS_CACHE_KEY, JSON.stringify({
+                statusCache: this.statusCache,
+                statusCacheTime: this.statusCacheTime,
+                openSessionCheckIn: this.openSessionCheckIn,
+                cachedEmployeeNumber: this.cachedEmployeeNumber,
+            }));
+        } catch (e) {
+            console.log('[AttendanceService] Persist error (non-fatal):', e);
+        }
+    }
+
+    // ── ✅ NEW: single source of truth for "do we have a fresh cached status?" ─
+    // Returns the cached status string if valid, or null on miss/stale/mismatch.
+    // NEVER hits the API. Safe to call from any isolate (hydrates first).
+    async getCachedStatus(employeeNumber) {
+        await this.hydrateStatusCache();
+        if (
+            this.cachedEmployeeNumber === employeeNumber &&
+            this.statusCache !== null &&
+            (Date.now() - this.statusCacheTime) < this.STATUS_CACHE_TTL
+        ) {
+            return this.statusCache;
+        }
+        return null;
+    }
+
+    async setStatusCache(employeeNumber, status, openSessionCheckIn = null) {
         this.statusCache = status;
         this.statusCacheTime = Date.now();
         this.cachedEmployeeNumber = employeeNumber;
@@ -24,22 +77,25 @@ class AttendanceService {
             this.openSessionCheckIn = null;
         }
         console.log(`[AttendanceService] Status cache set: ${status}, openSession: ${openSessionCheckIn}`);
+        await this._persist(); // ✅ NEW — awaited so it survives even if the (bg) task ends right after
     }
 
-    clearStatusCache() {
+    async clearStatusCache() {
         this.statusCache = null;
         this.statusCacheTime = 0;
         // NOTE: intentionally keep openSessionCheckIn alive so getCurrentStatus
         // can still use it as a fallback even after the cache TTL expires.
         console.log('[AttendanceService] Status cache cleared');
+        await this._persist(); // ✅ NEW
     }
 
-    clearAll() {
+    async clearAll() {
         this.statusCache = null;
         this.statusCacheTime = 0;
         this.openSessionCheckIn = null;
         this.cachedEmployeeNumber = null;
         console.log('[AttendanceService] All cache cleared');
+        await this._persist(); // ✅ NEW
     }
 
     // True if there's an open session whose check-in date is NOT today —
@@ -83,7 +139,8 @@ class AttendanceService {
             if (response.data?.action === 'ALREADY_CHECKED_IN') {
                 console.log('[AttendanceService] Already checked in — session is OPEN');
                 // Store the open session checkIn so getCurrentStatus can use it
-                this.setStatusCache(employeeNumber, "CHECKED_IN", openCheckIn); return {
+                await this.setStatusCache(employeeNumber, "CHECKED_IN", openCheckIn);
+                return {
                     success: true,
                     data: response.data,
                     message: 'Already checked in',
@@ -92,7 +149,7 @@ class AttendanceService {
             }
 
             if (response.success) {
-                this.setStatusCache(employeeNumber, "CHECKED_IN", openCheckIn);
+                await this.setStatusCache(employeeNumber, "CHECKED_IN", openCheckIn);
             }
 
             return {
@@ -123,7 +180,7 @@ class AttendanceService {
 
             if (response.success) {
                 // Clear open session on checkout
-                this.setStatusCache(employeeNumber, "CHECKED_OUT");
+                await this.setStatusCache(employeeNumber, "CHECKED_OUT");
             }
 
             return {
@@ -173,21 +230,21 @@ class AttendanceService {
         }
     }
 
+    // ── UPDATED: routes through getCachedStatus (hydrates + checks TTL) ────────
     async getCurrentStatus(employeeNumber) {
         try {
-            // ── 1. Fresh TTL cache — most authoritative ──────────────────────────
-            if (
-                this.cachedEmployeeNumber === employeeNumber &&
-                this.statusCache !== null &&
-                (Date.now() - this.statusCacheTime) < this.STATUS_CACHE_TTL
-            ) {
-                console.log(`[AttendanceService] Status: ${this.statusCache} (cached)`);
-                return this.statusCache;
+            const cached = await this.getCachedStatus(employeeNumber);
+            if (cached !== null) {
+                console.log(`[AttendanceService] Status: ${cached} (cached)`);
+                return cached;
             }
 
-            // ── 2. Fetch history ─────────────────────────────────────────────────
+            // Cache miss/stale — fetch once, then persist so the NEXT tick
+            // (even in a different isolate) is a hit.
             const history = await this.getAttendanceHistory(employeeNumber);
-            return this._deriveStatus(history);
+            const status = this._deriveStatus(history);
+            await this.setStatusCache(employeeNumber, status, this.openSessionCheckIn);
+            return status;
 
         } catch (error) {
             console.error('[AttendanceService] Get current status error:', error);

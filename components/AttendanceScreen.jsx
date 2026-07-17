@@ -1,9 +1,7 @@
-
-
 import { MaterialIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   RefreshControl,
   ScrollView,
@@ -36,26 +34,272 @@ const formatDate = (dateString) => {
   });
 };
 
-const computeLiveDuration = (todayAttendance, isCheckedIn, activeCheckIn) => {
+const computeDurationValue = (isCheckedIn, checkInISO, closedMinutes = 0) => {
   if (!isCheckedIn) {
-    if (!todayAttendance) return "0h 0m";
-    const mins = todayAttendance.totalDurationMinutes || 0;
+    const mins = closedMinutes || 0;
     return `${Math.floor(mins / 60)}h ${mins % 60}m`;
   }
-  const checkInISO = activeCheckIn || todayAttendance?.oldestCheckIn;
   if (!checkInISO) return "0h 0m 0s";
 
   const elapsedSec = Math.floor(
     (Date.now() - new Date(checkInISO).getTime()) / 1000
   );
-  const closedMins = todayAttendance?.totalDurationMinutes || 0;
-  const totalSec = closedMins * 60 + elapsedSec;
+  const totalSec = closedMinutes * 60 + elapsedSec;
 
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
   const s = totalSec % 60;
   return `${h}h ${m}m ${s}s`;
 };
+
+// ─── isolated ticking component ────────────────────────────────────────────
+// Owns its own interval + state. Only THIS re-renders every second —
+// parent and siblings (stats row, history list) never do.
+
+const LiveDurationText = memo(function LiveDurationText({
+  isCheckedIn,
+  checkInISO,
+  closedMinutes,
+}) {
+  const [duration, setDuration] = useState(() =>
+    computeDurationValue(isCheckedIn, checkInISO, closedMinutes)
+  );
+
+  useEffect(() => {
+    if (!isCheckedIn || !checkInISO) {
+      setDuration(computeDurationValue(false, null, closedMinutes));
+      return;
+    }
+
+    setDuration(computeDurationValue(true, checkInISO, closedMinutes));
+    const id = setInterval(() => {
+      setDuration(computeDurationValue(true, checkInISO, closedMinutes));
+    }, 1000);
+
+    return () => clearInterval(id);
+  }, [isCheckedIn, checkInISO, closedMinutes]);
+
+  return <Text style={styles.durationValue}>{duration}</Text>;
+});
+
+// ─── memoized sections ──────────────────────────────────────────────────────
+
+const StatsRow = memo(function StatsRow({
+  statusColor,
+  statusLabel,
+  distance,
+  isInsideOffice,
+}) {
+  return (
+    <View style={styles.statsRow}>
+      <View style={styles.statCard}>
+        <MaterialIcons name="access-time" size={24} color="#D96A17" />
+        <Text style={styles.statLabel}>Status</Text>
+        <Text style={[styles.statValue, { color: statusColor }]}>
+          {statusLabel}
+        </Text>
+      </View>
+      <View style={styles.statCard}>
+        <MaterialIcons name="calendar-today" size={24} color="#D96A17" />
+        <Text style={styles.statLabel}>Today</Text>
+        <Text style={styles.statValue}>
+          {new Date().toLocaleDateString("en-GB", {
+            day: "2-digit",
+            month: "short",
+          })}
+        </Text>
+      </View>
+      <View style={styles.statCard}>
+        <MaterialIcons
+          name={isInsideOffice ? "location-on" : "location-off"}
+          size={24}
+          color={isInsideOffice ? "#10B981" : "#D96A17"}
+        />
+        <Text style={styles.statLabel}>Distance</Text>
+        <Text style={styles.statValue}>{Math.round(distance)}m</Text>
+      </View>
+    </View>
+  );
+});
+
+const SessionCard = memo(function SessionCard({
+  todayAttendance,
+  isCheckedIn,
+  statusColor,
+  statusLabel,
+  activeCheckIn,
+  todayDisplayStatus,
+}) {
+  if (!todayAttendance) {
+    return (
+      <View style={styles.emptyCard}>
+        <MaterialIcons name="event-busy" size={32} color="#D1D5DB" />
+        <Text style={styles.emptyText}>No attendance recorded today</Text>
+        <Text style={styles.emptySubText}>
+          Auto check-in activates when you enter the office
+        </Text>
+      </View>
+    );
+  }
+
+  const checkInISO = isCheckedIn
+    ? activeCheckIn || todayAttendance.oldestCheckIn
+    : null;
+  const closedMinutes = todayAttendance.totalDurationMinutes || 0;
+
+  return (
+    <View style={styles.sessionCard}>
+      <View style={styles.sessionHeader}>
+        <Text style={styles.sessionDate}>
+          {todayAttendance.date || new Date().toISOString().split("T")[0]}
+        </Text>
+        <View
+          style={[
+            styles.statusPill,
+            { backgroundColor: isCheckedIn ? "#D1FAE5" : "#FEE2E2" },
+          ]}
+        >
+          <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+          <Text style={[styles.statusPillText, { color: statusColor }]}>
+            {statusLabel}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.durationBlock}>
+        <MaterialIcons name="timer" size={20} color="#D96A17" />
+        <Text style={styles.durationLabel}>
+          {isCheckedIn ? "Time in office" : "Total duration"}
+        </Text>
+        <LiveDurationText
+          isCheckedIn={isCheckedIn}
+          checkInISO={checkInISO}
+          closedMinutes={closedMinutes}
+        />
+      </View>
+
+      <View style={styles.divider} />
+
+      <View style={styles.sessionDetail}>
+        <MaterialIcons name="login" size={16} color="#6B7280" />
+        <Text style={styles.sessionLabel}>Check In</Text>
+        <Text style={styles.sessionValue}>
+          {isCheckedIn && activeCheckIn
+            ? formatTime(activeCheckIn)
+            : formatTime(todayAttendance.oldestCheckIn)}
+        </Text>
+      </View>
+
+      <View style={styles.sessionDetail}>
+        <MaterialIcons
+          name="logout"
+          size={16}
+          color={isCheckedIn ? "#D1D5DB" : "#6B7280"}
+        />
+        <Text style={styles.sessionLabel}>Check Out</Text>
+        <Text
+          style={[styles.sessionValue, isCheckedIn && { color: "#9CA3AF" }]}
+        >
+          {isCheckedIn
+            ? "Active session"
+            : todayAttendance.latestCheckOut
+              ? formatTime(todayAttendance.latestCheckOut)
+              : "—"}
+        </Text>
+      </View>
+
+      <View style={styles.sessionDetail}>
+        <MaterialIcons name="repeat" size={16} color="#6B7280" />
+        <Text style={styles.sessionLabel}>Sessions</Text>
+        <Text style={styles.sessionValue}>
+          {todayAttendance.totalSessions || 1}
+        </Text>
+      </View>
+
+      <View style={styles.sessionDetail}>
+        <MaterialIcons name="event-available" size={16} color="#6B7280" />
+        <Text style={styles.sessionLabel}>Day Status</Text>
+        <Text
+          style={[
+            styles.sessionValue,
+            {
+              color: todayDisplayStatus === "Present" ? "#10B981" : "#EF4444",
+              fontWeight: "600",
+            },
+          ]}
+        >
+          {todayDisplayStatus}
+        </Text>
+      </View>
+    </View>
+  );
+});
+
+const HistoryRow = memo(function HistoryRow({ record }) {
+  const displayStatus = record.oldestCheckIn ? "Present" : record.status;
+  const isPresent = displayStatus === "Present";
+
+  return (
+    <View style={styles.historyCard}>
+      <View style={styles.historyLeft}>
+        <Text style={styles.historyDate}>{formatDate(record.date)}</Text>
+        <Text style={styles.historyMeta}>
+          {record.totalSessions || 1} session
+          {(record.totalSessions || 1) !== 1 ? "s" : ""}
+          {" · "}
+          {formatTime(record.oldestCheckIn)}
+          {record.latestCheckOut
+            ? ` – ${formatTime(record.latestCheckOut)}`
+            : " – ongoing"}
+        </Text>
+      </View>
+      <View style={styles.historyRight}>
+        <View
+          style={[
+            styles.historyBadge,
+            { backgroundColor: isPresent ? "#D1FAE5" : "#FEE2E2" },
+          ]}
+        >
+          <Text
+            style={[
+              styles.historyBadgeText,
+              { color: isPresent ? "#065F46" : "#991B1B" },
+            ]}
+          >
+            {displayStatus}
+          </Text>
+        </View>
+        <Text style={styles.historyDuration}>
+          {record.totalDurationFormatted || "0h 0m"}
+        </Text>
+      </View>
+    </View>
+  );
+});
+
+const HistoryList = memo(function HistoryList({
+  sortedHistory,
+  visibleCount,
+  onLoadMore,
+}) {
+  if (sortedHistory.length === 0) return null;
+
+  return (
+    <>
+      <Text style={styles.sectionTitle}>Recent History</Text>
+      {sortedHistory.slice(0, visibleCount).map((record) => (
+        <HistoryRow key={record.date} record={record} />
+      ))}
+
+      {sortedHistory.length > visibleCount && (
+        <TouchableOpacity style={styles.loadMoreBtn} onPress={onLoadMore}>
+          <MaterialIcons name="expand-more" size={40} color="#D96A17" />
+          <Text style={styles.loadMoreText}>Show More</Text>
+        </TouchableOpacity>
+      )}
+    </>
+  );
+});
 
 // ─── component ──────────────────────────────────────────────────────────────
 
@@ -66,65 +310,20 @@ export default function Attend() {
   const [currentStatus, setCurrentStatus] = useState("CHECKED_OUT");
   const [attendanceHistory, setAttendanceHistory] = useState([]);
   const [visibleCount, setVisibleCount] = useState(10);
-  // ✅ FIX: Start with loading=false so cached data shows immediately
-  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [todayAttendance, setTodayAttendance] = useState(null);
   const [activeCheckIn, setActiveCheckIn] = useState(null);
 
-  const [liveDuration, setLiveDuration] = useState("0h 0m 0s");
-  const timerRef = useRef(null);
-  const todayRef = useRef(null);
-  const activeCheckInRef = useRef(null);
   const refreshAttendanceDataRef = useRef(null);
-
-  // ── timer ────────────────────────────────────────────────────────────────
-  const startTimer = useCallback(() => {
-    if (timerRef.current) return;
-    timerRef.current = setInterval(() => {
-      setLiveDuration(
-        computeLiveDuration(todayRef.current, true, activeCheckInRef.current)
-      );
-    }, 1000);
-  }, []);
-
-  const stopTimer = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    todayRef.current = todayAttendance;
-    activeCheckInRef.current = activeCheckIn;
-
-    if (
-      currentStatus === "CHECKED_IN" &&
-      (activeCheckIn || todayAttendance?.oldestCheckIn)
-    ) {
-      setLiveDuration(
-        computeLiveDuration(todayAttendance, true, activeCheckIn)
-      );
-      startTimer();
-    } else {
-      stopTimer();
-      setLiveDuration(computeLiveDuration(todayAttendance, false, null));
-    }
-  }, [currentStatus, todayAttendance, activeCheckIn, startTimer, stopTimer]);
-
-  useEffect(() => () => stopTimer(), [stopTimer]);
 
   // ── STEP 1: Load from in-memory cache instantly (no API call) ────────────
   const loadFromCache = useCallback(async () => {
     try {
-      // Use whatever attendanceService already has in memory
       const userData = await AsyncStorage.getItem("userData");
       const user = JSON.parse(userData);
 
       if (attendanceService.cachedEmployeeNumber !== user.employeeNumber) {
         attendanceService.clearAll();
-
         setCurrentStatus("CHECKED_OUT");
         setTodayAttendance(null);
         setActiveCheckIn(null);
@@ -156,7 +355,6 @@ export default function Attend() {
         }
       }
 
-      // Also load last known location from AsyncStorage (instant, no GPS call)
       const lastLocRaw = await AsyncStorage.getItem("lastLocation");
       if (lastLocRaw) {
         const lastLoc = JSON.parse(lastLocRaw);
@@ -169,6 +367,10 @@ export default function Attend() {
   }, []);
 
   // ── STEP 2: Fetch fresh data from API in background ──────────────────────
+  // Called on: app start, check-in success, check-out success, pull-to-refresh,
+  // app returning from long background. NEVER called directly from a GPS tick —
+  // GPS only calls this indirectly, via ATTENDANCE_UPDATED, when a check-in/out
+  // actually happens.
   const refreshAttendanceData = useCallback(async () => {
     try {
       const userData = await AsyncStorage.getItem("userData");
@@ -177,27 +379,15 @@ export default function Attend() {
       const employeeNumber = parsedUser.employeeNumber;
       if (!employeeNumber) return;
 
-      // ✅ FIX: Run history fetch and location in parallel, don't await GPS
       const [history] = await Promise.all([
         attendanceService.getAttendanceHistory(employeeNumber),
       ]);
-
       const today = new Date().toISOString().split("T")[0];
       const todayRecord = history.success
         ? history.data.find((a) => a.date === today) || null
         : null;
 
-      let status;
-      if (
-        attendanceService.cachedEmployeeNumber === employeeNumber &&
-        attendanceService.statusCache !== null &&
-        Date.now() - attendanceService.statusCacheTime <
-        attendanceService.STATUS_CACHE_TTL
-      ) {
-        status = attendanceService.statusCache;
-      } else {
-        status = attendanceService._deriveStatus(history);
-      }
+      const status = attendanceService._deriveStatus(history);
 
       const openSession = attendanceService.openSessionCheckIn;
       const openSessionIsToday =
@@ -223,8 +413,6 @@ export default function Attend() {
       setActiveCheckIn(openSessionIsToday ? openSession : null);
       if (history.success) setAttendanceHistory(history.data);
 
-      // ✅ FIX: Fetch GPS location separately AFTER UI is updated
-      //    so it doesn't block the history from rendering
       locationService.getCurrentLocation().then((location) => {
         if (location) {
           setDistance(location.distance);
@@ -242,11 +430,14 @@ export default function Attend() {
 
   // ── init ─────────────────────────────────────────────────────────────────
   useEffect(() => {
+    // Fired only when a real check-in/out transition happens — not on every GPS tick.
     const handleAttendanceUpdate = () => {
       console.log("[Attend] ATTENDANCE_UPDATED received");
       refreshAttendanceDataRef.current?.();
     };
 
+    // Fired on every GPS tick — deliberately does NOT touch attendance state,
+    // so it never invalidates SessionCard / HistoryList memoization.
     const handleLocationUpdate = (data) => {
       setDistance(data.distance);
       setIsInsideOffice(data.isInside);
@@ -261,13 +452,11 @@ export default function Attend() {
         }
         setUser(JSON.parse(userData));
 
-        // ✅ FIX: Show cached data FIRST (instant), then fetch fresh in background
-        await loadFromCache();           // ~0ms — reads memory + AsyncStorage
-        refreshAttendanceData();         // non-blocking — updates UI when ready
+        await loadFromCache();
+        refreshAttendanceData();
       } catch (error) {
         console.error("[Attend] Init error:", error);
       }
-      // ✅ FIX: No setLoading(false) needed — loading starts as false
     };
 
     eventEmitter.on("ATTENDANCE_UPDATED", handleAttendanceUpdate);
@@ -287,6 +476,10 @@ export default function Attend() {
     setRefreshing(false);
   }, [refreshAttendanceData]);
 
+  const handleLoadMore = useCallback(() => {
+    setVisibleCount((prev) => prev + 10);
+  }, []);
+
   // ── derived ──────────────────────────────────────────────────────────────
   const isCheckedIn = currentStatus === "CHECKED_IN";
   const statusColor = isCheckedIn ? "#10B981" : "#EF4444";
@@ -300,14 +493,13 @@ export default function Attend() {
         ? "Present"
         : todayAttendance?.status || "Absent";
 
-  const sortedHistory = [...attendanceHistory].sort(
-    (a, b) => new Date(b.date) - new Date(a.date)
+  const sortedHistory = useMemo(
+    () =>
+      [...attendanceHistory].sort((a, b) => new Date(b.date) - new Date(a.date)),
+    [attendanceHistory]
   );
 
   // ── render ───────────────────────────────────────────────────────────────
-  // ✅ FIX: Removed loading spinner entirely — skeleton/cache shows instantly.
-  //    Pull-to-refresh handles manual reloads.
-
   return (
     <ScrollView
       style={styles.container}
@@ -324,133 +516,23 @@ export default function Attend() {
         </Text>
       </View>
 
-      <View style={styles.statsRow}>
-        <View style={styles.statCard}>
-          <MaterialIcons name="access-time" size={24} color="#D96A17" />
-          <Text style={styles.statLabel}>Status</Text>
-          <Text style={[styles.statValue, { color: statusColor }]}>
-            {statusLabel}
-          </Text>
-        </View>
-        <View style={styles.statCard}>
-          <MaterialIcons name="calendar-today" size={24} color="#D96A17" />
-          <Text style={styles.statLabel}>Today</Text>
-          <Text style={styles.statValue}>
-            {new Date().toLocaleDateString("en-GB", {
-              day: "2-digit",
-              month: "short",
-            })}
-          </Text>
-        </View>
-        <View style={styles.statCard}>
-          <MaterialIcons
-            name={isInsideOffice ? "location-on" : "location-off"}
-            size={24}
-            color={isInsideOffice ? "#10B981" : "#D96A17"}
-          />
-          <Text style={styles.statLabel}>Distance</Text>
-          <Text style={styles.statValue}>{Math.round(distance)}m</Text>
-        </View>
-      </View>
+      <StatsRow
+        statusColor={statusColor}
+        statusLabel={statusLabel}
+        distance={distance}
+        isInsideOffice={isInsideOffice}
+      />
 
       <Text style={styles.sectionTitle}>Today's Session</Text>
 
-      {todayAttendance ? (
-        <View style={styles.sessionCard}>
-          <View style={styles.sessionHeader}>
-            <Text style={styles.sessionDate}>
-              {todayAttendance.date || new Date().toISOString().split("T")[0]}
-            </Text>
-            <View
-              style={[
-                styles.statusPill,
-                { backgroundColor: isCheckedIn ? "#D1FAE5" : "#FEE2E2" },
-              ]}
-            >
-              <View
-                style={[styles.statusDot, { backgroundColor: statusColor }]}
-              />
-              <Text style={[styles.statusPillText, { color: statusColor }]}>
-                {statusLabel}
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.durationBlock}>
-            <MaterialIcons name="timer" size={20} color="#D96A17" />
-            <Text style={styles.durationLabel}>
-              {isCheckedIn ? "Time in office" : "Total duration"}
-            </Text>
-            <Text style={styles.durationValue}>{liveDuration}</Text>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.sessionDetail}>
-            <MaterialIcons name="login" size={16} color="#6B7280" />
-            <Text style={styles.sessionLabel}>Check In</Text>
-            <Text style={styles.sessionValue}>
-              {isCheckedIn && activeCheckIn
-                ? formatTime(activeCheckIn)
-                : formatTime(todayAttendance.oldestCheckIn)}
-            </Text>
-          </View>
-
-          <View style={styles.sessionDetail}>
-            <MaterialIcons
-              name="logout"
-              size={16}
-              color={isCheckedIn ? "#D1D5DB" : "#6B7280"}
-            />
-            <Text style={styles.sessionLabel}>Check Out</Text>
-            <Text
-              style={[
-                styles.sessionValue,
-                isCheckedIn && { color: "#9CA3AF" },
-              ]}
-            >
-              {isCheckedIn
-                ? "Active session"
-                : todayAttendance.latestCheckOut
-                  ? formatTime(todayAttendance.latestCheckOut)
-                  : "—"}
-            </Text>
-          </View>
-
-          <View style={styles.sessionDetail}>
-            <MaterialIcons name="repeat" size={16} color="#6B7280" />
-            <Text style={styles.sessionLabel}>Sessions</Text>
-            <Text style={styles.sessionValue}>
-              {todayAttendance.totalSessions || 1}
-            </Text>
-          </View>
-
-          <View style={styles.sessionDetail}>
-            <MaterialIcons name="event-available" size={16} color="#6B7280" />
-            <Text style={styles.sessionLabel}>Day Status</Text>
-            <Text
-              style={[
-                styles.sessionValue,
-                {
-                  color:
-                    todayDisplayStatus === "Present" ? "#10B981" : "#EF4444",
-                  fontWeight: "600",
-                },
-              ]}
-            >
-              {todayDisplayStatus}
-            </Text>
-          </View>
-        </View>
-      ) : (
-        <View style={styles.emptyCard}>
-          <MaterialIcons name="event-busy" size={32} color="#D1D5DB" />
-          <Text style={styles.emptyText}>No attendance recorded today</Text>
-          <Text style={styles.emptySubText}>
-            Auto check-in activates when you enter the office
-          </Text>
-        </View>
-      )}
+      <SessionCard
+        todayAttendance={todayAttendance}
+        isCheckedIn={isCheckedIn}
+        statusColor={statusColor}
+        statusLabel={statusLabel}
+        activeCheckIn={activeCheckIn}
+        todayDisplayStatus={todayDisplayStatus}
+      />
 
       <View style={styles.autoCard}>
         <MaterialIcons name="gps-fixed" size={20} color="#D96A17" />
@@ -460,81 +542,18 @@ export default function Attend() {
         </Text>
       </View>
 
-      {attendanceHistory.length > 0 && (
-        <>
-          <Text style={styles.sectionTitle}>Recent History</Text>
-          {sortedHistory
-            .slice(0, visibleCount)
-            .map((record, index) => {
-              const displayStatus =
-                record.oldestCheckIn ? "Present" : record.status;
-              const isPresent = displayStatus === "Present";
-              return (
-                <View key={index} style={styles.historyCard}>
-                  <View style={styles.historyLeft}>
-                    <Text style={styles.historyDate}>
-                      {formatDate(record.date)}
-                    </Text>
-                    <Text style={styles.historyMeta}>
-                      {record.totalSessions || 1} session
-                      {(record.totalSessions || 1) !== 1 ? "s" : ""}
-                      {" · "}
-                      {formatTime(record.oldestCheckIn)}
-                      {record.latestCheckOut
-                        ? ` – ${formatTime(record.latestCheckOut)}`
-                        : " – ongoing"}
-                    </Text>
-                  </View>
-                  <View style={styles.historyRight}>
-                    <View
-                      style={[
-                        styles.historyBadge,
-                        { backgroundColor: isPresent ? "#D1FAE5" : "#FEE2E2" },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.historyBadgeText,
-                          { color: isPresent ? "#065F46" : "#991B1B" },
-                        ]}
-                      >
-                        {displayStatus}
-                      </Text>
-                    </View>
-                    <Text style={styles.historyDuration}>
-                      {record.totalDurationFormatted || "0h 0m"}
-                    </Text>
-                  </View>
-                </View>
-              );
-            })}
-
-          {sortedHistory.length > visibleCount && (
-            <TouchableOpacity
-              style={styles.loadMoreBtn}
-              onPress={() =>
-                setVisibleCount(prev => prev + 10)
-              }
-            >
-              <MaterialIcons
-                name="expand-more"
-                size={40}
-                color="#D96A17"
-              />
-              <Text style={styles.loadMoreText}>
-                Show More
-              </Text>
-            </TouchableOpacity>
-          )}
-        </>
-      )}
+      <HistoryList
+        sortedHistory={sortedHistory}
+        visibleCount={visibleCount}
+        onLoadMore={handleLoadMore}
+      />
 
       <View style={{ height: 30 }} />
     </ScrollView>
   );
 }
 
-// ─── styles ──────────────────────────────────────────────────────────────────
+// ─── styles (unchanged) ──────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F5F7FA" },
@@ -550,20 +569,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 20,
   },
-  headerTag: {
-    color: "#D96A17",
-    fontWeight: "700",
-    letterSpacing: 1,
-    fontSize: 12,
-  },
-  headerTitle: {
-    color: "#fff",
-    fontSize: 28,
-    fontWeight: "bold",
-    marginTop: 8,
-  },
+  headerTag: { color: "#D96A17", fontWeight: "700", letterSpacing: 1, fontSize: 12 },
+  headerTitle: { color: "#fff", fontSize: 28, fontWeight: "bold", marginTop: 8 },
   headerSubtitle: { color: "#D1D5DB", fontSize: 14, marginTop: 4 },
-
   statsRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -584,13 +592,7 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   statLabel: { fontSize: 12, color: "#6B7280", marginTop: 8 },
-  statValue: {
-    fontSize: 13,
-    fontWeight: "bold",
-    marginTop: 4,
-    textAlign: "center",
-  },
-
+  statValue: { fontSize: 13, fontWeight: "bold", marginTop: 4, textAlign: "center" },
   sectionTitle: {
     fontSize: 20,
     fontWeight: "bold",
@@ -599,7 +601,6 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 10,
   },
-
   sessionCard: {
     backgroundColor: "#fff",
     marginHorizontal: 20,
@@ -629,7 +630,6 @@ const styles = StyleSheet.create({
   },
   statusDot: { width: 7, height: 7, borderRadius: 4 },
   statusPillText: { fontSize: 13, fontWeight: "600" },
-
   durationBlock: {
     backgroundColor: "#FFF4EC",
     borderRadius: 10,
@@ -646,17 +646,10 @@ const styles = StyleSheet.create({
     color: "#D96A17",
     fontVariant: ["tabular-nums"],
   },
-
   divider: { height: 1, backgroundColor: "#F3F4F6", marginBottom: 12 },
-  sessionDetail: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 10,
-  },
+  sessionDetail: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 },
   sessionLabel: { flex: 1, fontSize: 13, color: "#6B7280" },
   sessionValue: { fontSize: 13, fontWeight: "600", color: "#111827" },
-
   emptyCard: {
     backgroundColor: "#fff",
     marginHorizontal: 20,
@@ -666,19 +659,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     elevation: 2,
   },
-  emptyText: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#6B7280",
-    marginTop: 12,
-  },
-  emptySubText: {
-    fontSize: 13,
-    color: "#9CA3AF",
-    marginTop: 6,
-    textAlign: "center",
-  },
-
+  emptyText: { fontSize: 15, fontWeight: "600", color: "#6B7280", marginTop: 12 },
+  emptySubText: { fontSize: 13, color: "#9CA3AF", marginTop: 6, textAlign: "center" },
   autoCard: {
     backgroundColor: "#FFF4EC",
     marginHorizontal: 20,
@@ -690,7 +672,6 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   autoText: { flex: 1, fontSize: 12, color: "#D96A17", lineHeight: 18 },
-
   historyCard: {
     backgroundColor: "#fff",
     marginHorizontal: 20,
@@ -713,15 +694,6 @@ const styles = StyleSheet.create({
   historyBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20 },
   historyBadgeText: { fontSize: 12, fontWeight: "600" },
   historyDuration: { fontSize: 12, color: "#6B7280", fontWeight: "500" },
-
-  loadMoreBtn: {
-    alignItems: "center",
-    marginTop: 10,
-    marginBottom: 20,
-  },
-
-  loadMoreText: {
-    color: "#D96A17",
-    fontWeight: "600",
-  },
+  loadMoreBtn: { alignItems: "center", marginTop: 10, marginBottom: 20 },
+  loadMoreText: { color: "#D96A17", fontWeight: "600" },
 });
