@@ -45,7 +45,7 @@ export default function Profile() {
               try {
                 const locationService =
                   require("../../services/location.service").default;
-                locationService?.stopTracking?.();
+                await locationService?.stopAllTracking?.();
               } catch (e) { }
 
               await AsyncStorage.multiRemove([
@@ -56,7 +56,7 @@ export default function Profile() {
                 "employeeNumber",
               ]);
 
-            router.replace("/");
+              router.replace("/");
             } catch (error) {
               console.log(error);
             }

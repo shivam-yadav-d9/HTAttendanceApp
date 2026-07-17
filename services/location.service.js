@@ -230,7 +230,7 @@ class LocationService {
                 if (isInsideOffice) {
                     this.lastCheckInTime = now;
                     this.wasInsideOffice = true;
-                    await this._saveWasInside(true); // ✅ ADDED
+                    await this._saveWasInside(true);
                     await this.performCheckIn(
                         employeeNumber,
                         location.coords.latitude,
@@ -238,7 +238,7 @@ class LocationService {
                     );
                 } else {
                     this.wasInsideOffice = false;
-                    await this._saveWasInside(false); // ✅ ADDED
+                    await this._saveWasInside(false);
                 }
 
                 this.retryCount = 0;
@@ -254,7 +254,7 @@ class LocationService {
                 console.log('[LocationService] AUTO CHECK-IN triggered');
                 this.lastCheckInTime = now;
                 this.wasInsideOffice = true;
-                await this._saveWasInside(true); // ✅ ADDED
+                await this._saveWasInside(true);
                 await this.performCheckIn(
                     employeeNumber,
                     location.coords.latitude,
@@ -270,7 +270,7 @@ class LocationService {
                 console.log('[LocationService] AUTO CHECK-OUT triggered');
                 this.lastCheckOutTime = now;
                 this.wasInsideOffice = false;
-                await this._saveWasInside(false); // ✅ ADDED
+                await this._saveWasInside(false);
                 await this.performCheckOut(
                     employeeNumber,
                     location.coords.latitude,
@@ -278,7 +278,7 @@ class LocationService {
                 );
             } else {
                 this.wasInsideOffice = isInsideOffice;
-                await this._saveWasInside(isInsideOffice); // ✅ ADDED
+                await this._saveWasInside(isInsideOffice);
             }
 
             this.retryCount = 0;
@@ -312,7 +312,6 @@ class LocationService {
 
                 const isForeground = AppState.currentState === 'active';
 
-                // ✅ Don't alert if this was just a "already checked in" confirmation
                 if (isForeground && !result.alreadyCheckedIn) {
                     Alert.alert(
                         'Auto Check-In ✓',
@@ -321,9 +320,6 @@ class LocationService {
                     );
                 }
 
-                // ✅ NEW: when the app is backgrounded/minimized (not killed —
-                // that case is handled by geofence.task.js), fire a real
-                // push notification instead of the in-app Alert.
                 if (!isForeground && !result.alreadyCheckedIn) {
                     await notificationService.notifyCheckIn(new Date());
                 }
@@ -377,7 +373,6 @@ class LocationService {
                     );
                 }
 
-                // ✅ NEW: push notification when minimized (not killed)
                 if (!isForeground) {
                     await notificationService.notifyCheckOut(new Date(), durationMinutes);
                 }
@@ -434,9 +429,34 @@ class LocationService {
         }
     }
 
+    // ✅ NEW: clear in-memory state so a fresh login doesn't inherit
+    // the previous user's geofence/cooldown state.
+    _resetState() {
+        this.retryCount = 0;
+        this.isProcessing = false;
+        this.lastCheckInTime = 0;
+        this.lastCheckOutTime = 0;
+        this.lastStaleRecoveryTime = 0;
+        this.wasInsideOffice = null;
+    }
+
+    // ✅ CHANGED: now actually unregisters the background task AND clears
+    // the persisted keys that background task uses, so nothing survives
+    // into the next user's session.
     async stopAllTracking() {
         this.stopTracking();
         await this._stopBackgroundTask();
+        this._resetState();
+        try {
+            await AsyncStorage.multiRemove([
+                'bgTaskWasInside',
+                'bgTaskCooldowns',
+                'lastAutoAction',
+                'lastLocation',
+            ]);
+        } catch (e) {
+            console.error('[LocationService] Failed clearing bg keys:', e);
+        }
         console.log('[LocationService] All tracking stopped');
     }
 
@@ -476,12 +496,12 @@ class LocationService {
                 console.log("[LocationService] Still inside — opening today's session");
                 this.lastCheckInTime = Date.now();
                 this.wasInsideOffice = true;
-                await this._saveWasInside(true); // ✅ ADDED
+                await this._saveWasInside(true);
                 await this.performCheckIn(employeeNumber, lat, lng);
             } else {
                 attendanceService.clearAll();
                 this.wasInsideOffice = false;
-                await this._saveWasInside(false); // ✅ ADDED
+                await this._saveWasInside(false);
                 eventEmitter.emit('ATTENDANCE_UPDATED');
             }
         } catch (error) {

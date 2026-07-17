@@ -2,7 +2,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,17 +15,17 @@ import {
   View
 } from "react-native";
 import authService from "../services/auth.service";
-import {
-  MAX_DISTANCE,
-  OFFICE_LOCATION,
-  calculateDistance,
-} from "../utils/location";
 
 export default function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [checking, setChecking] = useState(false);
+
+  // ✅ Prevents the background auto-login (savedCredentials) from applying
+  // its result / navigating if the user has already started (or finished)
+  // a manual login in the meantime.
+  const manualLoginStartedRef = useRef(false);
 
   useEffect(() => {
     checkExistingLogin();
@@ -60,75 +60,66 @@ export default function LoginScreen() {
     }
   };
 
-  // Auto-login when user re-enters office range
+  // Auto-login using saved credentials — runs once on mount, not gated
+  // on office location. Bails out if a session already exists, or if the
+  // user manually logs in before this resolves.
   useEffect(() => {
-    let subscription;
+    let cancelled = false;
 
-    const startWatching = async () => {
-      const { status } = await Location.getForegroundPermissionsAsync();
-      if (status !== "granted") return;
+    const attemptAutoLogin = async () => {
+      try {
+        const saved = await AsyncStorage.getItem("savedCredentials");
+        if (!saved || cancelled || manualLoginStartedRef.current) return;
 
-      const saved = await AsyncStorage.getItem("savedCredentials");
-      if (!saved) return;
+        const currentToken = await AsyncStorage.getItem("userToken");
+        if (currentToken) return; // already logged in — don't overwrite
 
-      subscription = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 5000,
-          distanceInterval: 5,
-        },
-        async (location) => {
-          const dist = calculateDistance(
-            location.coords.latitude,
-            location.coords.longitude,
-            OFFICE_LOCATION.latitude,
-            OFFICE_LOCATION.longitude
-          );
+        const { username: savedUsername, password: savedPassword } =
+          JSON.parse(saved);
 
-          if (dist <= MAX_DISTANCE) {
-            try {
-              const { username: savedUsername, password: savedPassword } =
-                JSON.parse(saved);
+        const result = await authService.login(savedUsername, savedPassword);
 
-              // Use OnTrack API for auto-login
-              const result = await authService.login(savedUsername, savedPassword);
+        // ✅ If the user started a manual login while this was in flight,
+        // discard this result entirely — don't overwrite their session.
+        if (cancelled || manualLoginStartedRef.current) return;
 
-              if (result.success) {
-                const user = result.user;
-                const jobTitle = (user.jobTitle || "").toUpperCase();
+        if (result.success) {
+          const user = result.user;
+          const jobTitle = (user.jobTitle || "").toUpperCase();
 
-                if (jobTitle === "FITTER") {
-                  router.replace("/(fitter)/attendance");
-                } else if (
-                  jobTitle === "LOGISTICS EXECUTIVE" ||
-                  jobTitle === "DELIVERY EXECUTIVE"
-                ) {
-                  router.replace("/(delivery)/attendance");
-                } else {
-                  router.replace("/(tabs)/home");
-                }
-              }
-            } catch (e) {
-              console.log("Auto login error:", e);
-            }
+          if (jobTitle === "FITTER") {
+            router.replace("/(fitter)/attendance");
+          } else if (
+            jobTitle === "LOGISTICS EXECUTIVE" ||
+            jobTitle === "DELIVERY EXECUTIVE"
+          ) {
+            router.replace("/(delivery)/attendance");
+          } else {
+            router.replace("/(tabs)/home");
           }
         }
-      );
+      } catch (e) {
+        console.log("Auto login error:", e);
+      }
     };
 
-    startWatching();
+    attemptAutoLogin();
 
     return () => {
-      if (subscription) subscription.remove();
+      cancelled = true;
     };
   }, []);
 
-  // Manual Login with OnTrack API - Updated to allow login from anywhere
+  // Manual Login with OnTrack API - allows login from anywhere
   const login = async () => {
     if (!username || !password) {
       Alert.alert("Error", "Please enter both Employee Number and Password");
       return;
     }
+
+    // ✅ Lock out the auto-login effect the moment the user commits to
+    // a manual login, so its result (if still in flight) gets ignored.
+    manualLoginStartedRef.current = true;
 
     const { status: fgStatus } =
       await Location.requestForegroundPermissionsAsync();
@@ -284,7 +275,7 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Location notice - Updated to reflect that location is still tracked but not required for login */}
+        {/* Location notice */}
         <View style={styles.locationNote}>
           <MaterialIcons name="location-on" size={14} color="#D96A17" />
           <Text style={styles.locationText}>
@@ -304,13 +295,6 @@ export default function LoginScreen() {
             <Text style={styles.loginText}>Open Staff Dashboard →</Text>
           )}
         </TouchableOpacity>
-
-        {/* Register Link */}
-        {/* <TouchableOpacity onPress={goToRegister} style={styles.registerLink}>
-          <Text style={styles.registerText}>
-            New user? Register here
-          </Text>
-        </TouchableOpacity> */}
 
         <Text style={styles.footerText}>
           Use your assigned HomeTown employee credentials.
@@ -351,27 +335,12 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
     justifyContent: "center",
   },
-
-  logoContainer: {
-    alignItems: "center",
-    marginBottom: 14,
-  },
-
-  logo: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-  },
-
-  brand: {
-    fontSize: 28,
-    fontWeight: "900",
-    marginTop: 8,
-  },
+  logoContainer: { alignItems: "center", marginBottom: 14 },
+  logo: { width: 80, height: 80, borderRadius: 40 },
+  brand: { fontSize: 28, fontWeight: "900", marginTop: 8 },
   brandHome: { color: "#fff" },
   brandTown: { color: "#D96A17" },
   brandOnTrack: { color: "#F5C87A" },
-
   tagPill: {
     flexDirection: "row",
     alignItems: "center",
@@ -381,18 +350,8 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginTop: 7,
   },
-
-  tag: {
-    color: "#fff",
-    fontSize: 11,
-  },
-
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 28,
-    padding: 18,
-  },
-
+  tag: { color: "#fff", fontSize: 11 },
+  card: { backgroundColor: "#fff", borderRadius: 28, padding: 18 },
   personIconWrapper: {
     position: "absolute",
     top: 18,
@@ -401,36 +360,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 9,
   },
-
-  portal: {
-    color: "#D96A17",
-    fontWeight: "700",
-    fontSize: 10,
-    letterSpacing: 1.5,
-  },
-
-  heading: {
-    fontSize: 28,
-    fontWeight: "900",
-    color: "#3A2415",
-    marginTop: 3,
-  },
-
-  subHeading: {
-    color: "#777",
-    marginTop: 2,
-    marginBottom: 10,
-    fontSize: 12,
-  },
-
-  label: {
-    fontSize: 13,
-    fontWeight: "600",
-    marginBottom: 6,
-    marginTop: 10,
-    color: "#3A2415",
-  },
-
+  portal: { color: "#D96A17", fontWeight: "700", fontSize: 10, letterSpacing: 1.5 },
+  heading: { fontSize: 28, fontWeight: "900", color: "#3A2415", marginTop: 3 },
+  subHeading: { color: "#777", marginTop: 2, marginBottom: 10, fontSize: 12 },
+  label: { fontSize: 13, fontWeight: "600", marginBottom: 6, marginTop: 10, color: "#3A2415" },
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -441,13 +374,7 @@ const styles = StyleSheet.create({
     height: 48,
     backgroundColor: "#FAFAFA",
   },
-
-  input: {
-    flex: 1,
-    marginLeft: 10,
-    fontSize: 14,
-  },
-
+  input: { flex: 1, marginLeft: 10, fontSize: 14 },
   demoNote: {
     flexDirection: "row",
     alignItems: "center",
@@ -458,14 +385,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     gap: 6,
   },
-
-  demoText: {
-    fontSize: 11,
-    color: "#D96A17",
-    fontWeight: "500",
-    flex: 1,
-  },
-
+  demoText: { fontSize: 11, color: "#D96A17", fontWeight: "500", flex: 1 },
   locationNote: {
     flexDirection: "row",
     alignItems: "center",
@@ -476,14 +396,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     gap: 6,
   },
-
-  locationText: {
-    fontSize: 11,
-    color: "#D96A17",
-    fontWeight: "500",
-    flex: 1,
-  },
-
+  locationText: { fontSize: 11, color: "#D96A17", fontWeight: "500", flex: 1 },
   loginBtn: {
     backgroundColor: "#D96A17",
     height: 48,
@@ -492,66 +405,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 14,
   },
-
-  loginBtnDisabled: {
-    backgroundColor: "#E8A97A",
-  },
-
-  loginText: {
-    color: "#fff",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-
-  registerLink: {
-    marginTop: 12,
-    alignItems: "center",
-  },
-
-  registerText: {
-    color: "#D96A17",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-
-  footerText: {
-    textAlign: "center",
-    color: "#888",
-    marginTop: 10,
-    fontSize: 11,
-  },
-
-  bottom: {
-    marginTop: 14,
-    alignItems: "center",
-    gap: 4,
-  },
-
-  bottomTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-  },
-
-  website: {
-    color: "#fff",
-    textDecorationLine: "underline",
-    fontSize: 12,
-  },
-
-  policyRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  policy: {
-    color: "#ddd",
-    fontSize: 10,
-  },
-
-  quote: {
-    color: "#bbb",
-    fontSize: 10,
-    fontStyle: "italic",
-    textAlign: "center",
-  },
+  loginBtnDisabled: { backgroundColor: "#E8A97A" },
+  loginText: { color: "#fff", fontSize: 15, fontWeight: "700" },
+  registerLink: { marginTop: 12, alignItems: "center" },
+  registerText: { color: "#D96A17", fontSize: 13, fontWeight: "600" },
+  footerText: { textAlign: "center", color: "#888", marginTop: 10, fontSize: 11 },
+  bottom: { marginTop: 14, alignItems: "center", gap: 4 },
+  bottomTitle: { fontSize: 13, fontWeight: "700" },
+  website: { color: "#fff", textDecorationLine: "underline", fontSize: 12 },
+  policyRow: { flexDirection: "row", alignItems: "center" },
+  policy: { color: "#ddd", fontSize: 10 },
+  quote: { color: "#bbb", fontSize: 10, fontStyle: "italic", textAlign: "center" },
 });

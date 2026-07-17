@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from './api';
 import attendanceService from "./attendance.service";
+import locationService from "./location.service";
 
 class AuthService {
   // Main login using OnTrack API with username (employee number)
@@ -15,9 +16,10 @@ class AuthService {
         // Store user data and token
         await AsyncStorage.setItem('userToken', 'logged_in');
         await AsyncStorage.setItem('userData', JSON.stringify(response.data));
-
-        // Store the employee number for easy access
         await AsyncStorage.setItem('employeeNumber', response.data.employeeNumber);
+
+        // Start location tracking after login
+        await locationService.startTracking();
 
         return {
           success: true,
@@ -74,6 +76,9 @@ class AuthService {
         await AsyncStorage.setItem('userToken', 'logged_in');
         await AsyncStorage.setItem('userData', JSON.stringify(response.data));
 
+        // Start location tracking after login
+        await locationService.startTracking();
+
         return {
           success: true,
           user: response.data,
@@ -94,8 +99,13 @@ class AuthService {
     }
   }
 
+  // ✅ CHANGED: stopAllTracking() (not stopTracking()) so this matches the
+  // three profile.jsx logout handlers — unregisters the background geofence
+  // task and clears its persisted keys too, not just the foreground watcher.
   async logout() {
     attendanceService.clearAll();
+
+    await locationService.stopAllTracking();
 
     await AsyncStorage.multiRemove([
       "userToken",

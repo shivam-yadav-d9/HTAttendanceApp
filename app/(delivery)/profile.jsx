@@ -78,7 +78,7 @@ export default function Profile() {
                         try {
                             const locationService =
                                 require("../../services/location.service").default;
-                            locationService?.stopTracking?.();
+                            await locationService?.stopAllTracking?.();
                         } catch (e) { }
 
                         attendanceService.clearAll();
