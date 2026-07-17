@@ -1,22 +1,7 @@
 import { Tabs } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useEffect, useRef } from "react";
-import locationService from "../../services/location.service";
 
 export default function FitterLayout() {
-  const startedRef = useRef(false);
-
-  useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-
-    locationService.startTracking();
-
-    return () => {
-      locationService.stopTracking();
-    };
-  }, []);
-
   return (
     <Tabs
       screenOptions={{

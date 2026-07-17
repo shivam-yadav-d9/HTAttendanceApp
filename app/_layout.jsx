@@ -3,25 +3,33 @@ import { useEffect } from "react";
 import locationService from "../services/location.service";
 import notificationService from "../services/notification.service";
 
-export default function StaffLayout() {
+export default function RootLayout() {
   useEffect(() => {
+    let mounted = true;
+
     const init = async () => {
       try {
-        console.log("[StaffLayout] Requesting notification permissions...");
+        console.log("[RootLayout] Initializing...");
+
+        // Notification permission
         await notificationService.init();
 
-        console.log("[StaffLayout] Starting location tracking...");
-        const started = await locationService.startTracking();
-        console.log("[StaffLayout] Tracking started:", started);
+        // Start foreground location tracking
+        if (mounted) {
+          const started = await locationService.startTracking();
+          console.log("[RootLayout] Tracking started:", started);
+        }
       } catch (error) {
-        console.error("[StaffLayout] Failed to start tracking:", error);
+        console.error("[RootLayout] Initialization failed:", error);
       }
     };
 
     init();
 
     return () => {
-      locationService.stopTracking(); // foreground only
+      mounted = false;
+      console.log("[RootLayout] Stopping tracking...");
+      locationService.stopTracking();
     };
   }, []);
 
