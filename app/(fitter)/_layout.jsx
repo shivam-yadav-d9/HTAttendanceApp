@@ -1,5 +1,5 @@
-import { Tabs } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
+import { Tabs } from "expo-router";
 
 export default function FitterLayout() {
   return (
@@ -14,6 +14,9 @@ export default function FitterLayout() {
         },
       }}
     >
+  
+
+      {/* Existing Attendance */}
       <Tabs.Screen
         name="attendance"
         options={{
@@ -27,7 +30,52 @@ export default function FitterLayout() {
           ),
         }}
       />
+          {/* Fitter Dashboard */}
+      <Tabs.Screen
+        name="dashboard"
+        options={{
+          title: "Dashboard",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons
+              name="dashboard"
+              color={color}
+              size={size}
+            />
+          ),
+        }}
+      />
 
+      {/* Pending Fitting Jobs */}
+      <Tabs.Screen
+        name="fittings"
+        options={{
+          title: "Fittings",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons
+              name="build"
+              color={color}
+              size={size}
+            />
+          ),
+        }}
+      />
+
+      {/* Completed Fitting Jobs */}
+      <Tabs.Screen
+        name="completed-fittings"
+        options={{
+          title: "Completed",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons
+              name="check-circle"
+              color={color}
+              size={size}
+            />
+          ),
+        }}
+      />
+
+      {/* Existing Tracking */}
       <Tabs.Screen
         name="tracking"
         options={{
@@ -42,6 +90,7 @@ export default function FitterLayout() {
         }}
       />
 
+      {/* Existing Profile */}
       <Tabs.Screen
         name="profile"
         options={{
@@ -53,6 +102,15 @@ export default function FitterLayout() {
               size={size}
             />
           ),
+        }}
+      />
+
+      {/* Fitting Detail - NOT a bottom tab */}
+      <Tabs.Screen
+        name="fitting-detail"
+        options={{
+          href: null,
+          headerShown: false,
         }}
       />
     </Tabs>

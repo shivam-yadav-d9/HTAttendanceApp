@@ -45,8 +45,49 @@ const api = {
 
         return data;
     },
-  
-  get(endpoint) {
+
+    async putFormData(endpoint, formData) {
+        const token = await AsyncStorage.getItem('userToken');
+
+        const headers = {
+            Accept: 'application/json',
+        };
+
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
+        }
+
+        const response = await fetch(`${BASE_URL}${endpoint}`, {
+            method: 'PUT',
+            headers,
+            body: formData,
+        });
+
+        const responseText = await response.text();
+
+        console.log('API FormData URL:', `${BASE_URL}${endpoint}`);
+        console.log('Status:', response.status);
+        console.log('Response:', responseText);
+
+        let data = {};
+
+        try {
+            data = responseText ? JSON.parse(responseText) : {};
+        } catch (e) {
+            console.error('JSON Parse Error:', e);
+            throw new Error(
+                `Invalid JSON response from server: ${responseText}`
+            );
+        }
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Something went wrong');
+        }
+
+        return data;
+    },
+
+    get(endpoint) {
         return this.request(endpoint, { method: 'GET' });
     },
 

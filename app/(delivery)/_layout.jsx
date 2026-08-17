@@ -1,5 +1,5 @@
-import { Tabs } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
+import { Tabs } from "expo-router";
 
 export default function DeliveryLayout() {
   return (
@@ -14,13 +14,13 @@ export default function DeliveryLayout() {
         },
       }}
     >
-      <Tabs.Screen
+          <Tabs.Screen
         name="attendance"
         options={{
           title: "Attendance",
           tabBarIcon: ({ color, size }) => (
             <MaterialIcons
-              name="how-to-reg"
+              name="event-available"
               color={color}
               size={size}
             />
@@ -28,6 +28,40 @@ export default function DeliveryLayout() {
         }}
       />
 
+      {/* Delivery Dashboard */}
+      <Tabs.Screen
+        name="dashboard"
+        options={{
+          title: "Dashboard",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons
+              name="dashboard"
+              color={color}
+              size={size}
+            />
+          ),
+        }}
+      />
+
+      {/* My Delivery Tasks */}
+      <Tabs.Screen
+        name="deliveries"
+        options={{
+          title: "Deliveries",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons
+              name="local-shipping"
+              color={color}
+              size={size}
+            />
+          ),
+        }}
+      />
+
+      {/* Existing Attendance */}
+  
+
+      {/* Existing Tracking */}
       <Tabs.Screen
         name="tracking"
         options={{
@@ -42,6 +76,7 @@ export default function DeliveryLayout() {
         }}
       />
 
+      {/* Existing Profile */}
       <Tabs.Screen
         name="profile"
         options={{
@@ -53,6 +88,15 @@ export default function DeliveryLayout() {
               size={size}
             />
           ),
+        }}
+      />
+
+      {/* Delivery Details - hidden from bottom tab */}
+      <Tabs.Screen
+        name="delivery-detail"
+        options={{
+          href: null,
+          headerShown: false,
         }}
       />
     </Tabs>
