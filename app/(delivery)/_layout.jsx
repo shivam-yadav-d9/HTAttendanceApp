@@ -84,19 +84,19 @@ export default function DeliveryLayout() {
         }}
       />
 
-      <Tabs.Screen
-        name="barcode"
-        options={{
-          title: "Barcode",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialIcons
-              name="qr-code-scanner"
-              color={color}
-              size={size}
-            />
-          ),
-        }}
+ <Tabs.Screen
+  name="barcode"
+  options={{
+    title: "New Lead",
+    tabBarIcon: ({ color, size }) => (
+      <MaterialIcons
+        name="person-add"
+        color={color}
+        size={size}
       />
+    ),
+  }}
+/>
       {/* Existing Profile */}
       <Tabs.Screen
         name="profile"

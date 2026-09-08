@@ -63,20 +63,19 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* Barcode Scanner */}
-      <Tabs.Screen
-        name="barcode"
-        options={{
-          title: "Barcode",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons
-              name="barcode-outline"
-              size={size}
-              color={color}
-            />
-          ),
-        }}
+  <Tabs.Screen
+  name="barcode"
+  options={{
+    title: "New Lead",
+    tabBarIcon: ({ color, size }) => (
+      <Ionicons
+        name="person-add-outline"
+        size={size}
+        color={color}
       />
+    ),
+  }}
+/>
 
       <Tabs.Screen
         name="profile"
