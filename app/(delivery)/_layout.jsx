@@ -14,7 +14,7 @@ export default function DeliveryLayout() {
         },
       }}
     >
-          <Tabs.Screen
+      <Tabs.Screen
         name="attendance"
         options={{
           title: "Attendance",
@@ -59,7 +59,7 @@ export default function DeliveryLayout() {
       />
 
       {/* Existing Attendance */}
-  
+
 
       {/* Existing Tracking */}
       <Tabs.Screen
@@ -75,7 +75,28 @@ export default function DeliveryLayout() {
           ),
         }}
       />
+      {/* Delivery Details - hidden from bottom tab */}
+      <Tabs.Screen
+        name="delivery-detail"
+        options={{
+          href: null,
+          headerShown: false,
+        }}
+      />
 
+      <Tabs.Screen
+        name="barcode"
+        options={{
+          title: "Barcode",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons
+              name="qr-code-scanner"
+              color={color}
+              size={size}
+            />
+          ),
+        }}
+      />
       {/* Existing Profile */}
       <Tabs.Screen
         name="profile"
@@ -91,14 +112,7 @@ export default function DeliveryLayout() {
         }}
       />
 
-      {/* Delivery Details - hidden from bottom tab */}
-      <Tabs.Screen
-        name="delivery-detail"
-        options={{
-          href: null,
-          headerShown: false,
-        }}
-      />
+
     </Tabs>
   );
 }

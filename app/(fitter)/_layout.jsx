@@ -14,7 +14,7 @@ export default function FitterLayout() {
         },
       }}
     >
-  
+
 
       {/* Existing Attendance */}
       <Tabs.Screen
@@ -30,7 +30,7 @@ export default function FitterLayout() {
           ),
         }}
       />
-          {/* Fitter Dashboard */}
+      {/* Fitter Dashboard */}
       <Tabs.Screen
         name="dashboard"
         options={{
@@ -90,6 +90,31 @@ export default function FitterLayout() {
         }}
       />
 
+
+ {/* Fitting Detail - NOT a bottom tab */}
+      <Tabs.Screen
+        name="fitting-detail"
+        options={{
+          href: null,
+          headerShown: false,
+        }}
+      />
+
+      {/* Barcode Scanner */}
+      <Tabs.Screen
+        name="barcode"
+        options={{
+          title: "Barcode",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons
+              name="qr-code-scanner"
+              color={color}
+              size={size}
+            />
+          ),
+        }}
+      />
+      
       {/* Existing Profile */}
       <Tabs.Screen
         name="profile"
@@ -105,14 +130,7 @@ export default function FitterLayout() {
         }}
       />
 
-      {/* Fitting Detail - NOT a bottom tab */}
-      <Tabs.Screen
-        name="fitting-detail"
-        options={{
-          href: null,
-          headerShown: false,
-        }}
-      />
+     
     </Tabs>
   );
 }
