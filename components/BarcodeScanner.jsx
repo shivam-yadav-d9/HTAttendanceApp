@@ -1,3 +1,4 @@
+
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -16,6 +17,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { MaterialIcons } from "@expo/vector-icons";
 
 import api from "../services/api";
+import { getProductByBarcode } from "../services/product.service";
 
 export default function BarcodeScanner() {
   // =========================================================
@@ -83,7 +85,7 @@ export default function BarcodeScanner() {
   // =========================================================
   // BARCODE SCANNED
   // =========================================================
-  const handleBarcodeScanned = ({ data, type }) => {
+  const handleBarcodeScanned = async ({ data, type }) => {
     if (!data || scanned || submitting) {
       return;
     }
@@ -112,20 +114,63 @@ export default function BarcodeScanner() {
     }
 
     // -------------------------------------------------------
-    // Add product to list
+    // Stop scanner while API is being called
     // -------------------------------------------------------
-    setScannedProducts((previous) => [
-      ...previous,
-      code,
-    ]);
-
-    // Stop scanner until user clicks Scan Next Product
     setScanned(true);
 
-    Alert.alert(
-      "Product Added",
-      `${code} has been added successfully.`
-    );
+    try {
+      console.log(
+        "Calling Product Barcode API for:",
+        code
+      );
+
+      // =====================================================
+      // GET /api/products/barcode/{barcode}
+      // =====================================================
+      const productResponse =
+        await getProductByBarcode(code);
+
+      console.log(
+        "Product API Response:",
+        productResponse
+      );
+
+      // -------------------------------------------------------
+      // Check API response
+      // -------------------------------------------------------
+      if (!productResponse) {
+        throw new Error(
+          "Product not found."
+        );
+      }
+
+      // -------------------------------------------------------
+      // Add barcode after successful API response
+      // -------------------------------------------------------
+      setScannedProducts((previous) => [
+        ...previous,
+        code,
+      ]);
+
+      Alert.alert(
+        "Product Found",
+        `${code} has been added successfully.`
+      );
+    } catch (error) {
+      console.error(
+        "Product Barcode API Error:",
+        error
+      );
+
+      Alert.alert(
+        "Product Not Found",
+        error?.message ||
+          `No product found for barcode ${code}.`
+      );
+
+      // Allow user to scan again
+      setScanned(false);
+    }
   };
 
   // =========================================================
@@ -225,10 +270,14 @@ export default function BarcodeScanner() {
 
       console.log(
         "QR Lead Response:",
-        response?.data
+        response
       );
 
-      if (response?.data?.success) {
+      // =====================================================
+      // API.JS RETURNS DATA DIRECTLY
+      // Therefore use response.success
+      // =====================================================
+      if (response?.success) {
         Alert.alert(
           "Lead Submitted",
           "Customer lead has been submitted successfully.",
@@ -242,21 +291,19 @@ export default function BarcodeScanner() {
       } else {
         Alert.alert(
           "Submission Failed",
-          response?.data?.message ||
+          response?.message ||
             "Unable to submit the lead."
         );
       }
     } catch (error) {
       console.error(
         "QR Lead Submit Error:",
-        error?.response?.data ||
-          error?.message ||
-          error
+        error?.message || error
       );
 
       Alert.alert(
         "Submission Failed",
-        error?.response?.data?.message ||
+        error?.message ||
           "Something went wrong while submitting the lead."
       );
     } finally {

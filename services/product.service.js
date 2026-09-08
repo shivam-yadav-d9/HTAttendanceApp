@@ -1,14 +1,5 @@
 import api from "./api";
 
-/**
- * Get product details using barcode
- *
- * API:
- * GET /products/barcode/{barcode}
- *
- * Example:
- * GET /products/barcode/8901234567890
- */
 export const getProductByBarcode = async (barcode) => {
   try {
     if (!barcode) {
@@ -19,11 +10,13 @@ export const getProductByBarcode = async (barcode) => {
       `/products/barcode/${encodeURIComponent(barcode)}`
     );
 
-    return response.data;
+    console.log("Product Barcode Response:", response);
+
+    return response;
   } catch (error) {
     console.error(
       "getProductByBarcode error:",
-      error?.response?.data || error.message
+      error?.message || error
     );
 
     throw error;
