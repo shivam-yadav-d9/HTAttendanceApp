@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -17,7 +16,6 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { MaterialIcons } from "@expo/vector-icons";
 
 import api from "../services/api";
-import { getProductByBarcode } from "../services/product.service";
 
 export default function BarcodeScanner() {
   // =========================================================
@@ -44,8 +42,10 @@ export default function BarcodeScanner() {
   // =========================================================
   const [scannedProducts, setScannedProducts] = useState([]);
 
+  // Prevent multiple camera callbacks for same scan
   const [scanned, setScanned] = useState(false);
 
+  // Submit loading
   const [submitting, setSubmitting] = useState(false);
 
   // =========================================================
@@ -83,28 +83,149 @@ export default function BarcodeScanner() {
   };
 
   // =========================================================
-  // BARCODE SCANNED
+  // EXTRACT PRODUCT CODE FROM SCANNED VALUE
   // =========================================================
-  const handleBarcodeScanned = async ({ data, type }) => {
+  const extractProductCode = (data) => {
+    if (!data) {
+      return "";
+    }
+
+    const value = String(data).trim();
+
+    if (!value) {
+      return "";
+    }
+
+    // -------------------------------------------------------
+    // CASE 1:
+    // Full URL
+    //
+    // Example:
+    // https://www.hometown.in/600384489
+    //
+    // Result:
+    // 600384489
+    // -------------------------------------------------------
+    try {
+      const url = new URL(value);
+
+      const pathParts = url.pathname
+        .split("/")
+        .filter(Boolean);
+
+      if (pathParts.length > 0) {
+        const lastPart = pathParts[pathParts.length - 1];
+
+        // If last part is numeric, use it
+        if (/^\d+$/.test(lastPart)) {
+          return lastPart;
+        }
+
+        // If last part contains a number, extract the number
+        const numberMatch = lastPart.match(/\d+$/);
+
+        if (numberMatch) {
+          return numberMatch[0];
+        }
+      }
+    } catch (error) {
+      // Not a URL.
+      // Continue below and treat it as a normal barcode.
+    }
+
+    // -------------------------------------------------------
+    // CASE 2:
+    // URL-like string without valid URL parsing
+    //
+    // Example:
+    // www.hometown.in/600384489
+    //
+    // Result:
+    // 600384489
+    // -------------------------------------------------------
+    const parts = value
+      .split("/")
+      .filter(Boolean);
+
+    if (parts.length > 1) {
+      const lastPart = parts[parts.length - 1];
+
+      // Remove query string / hash if present
+      const cleanLastPart = lastPart
+        .split("?")[0]
+        .split("#")[0]
+        .trim();
+
+      if (/^\d+$/.test(cleanLastPart)) {
+        return cleanLastPart;
+      }
+
+      const numberMatch = cleanLastPart.match(/\d+$/);
+
+      if (numberMatch) {
+        return numberMatch[0];
+      }
+    }
+
+    // -------------------------------------------------------
+    // CASE 3:
+    // Normal barcode
+    //
+    // Example:
+    // 600384489
+    //
+    // Result:
+    // 600384489
+    // -------------------------------------------------------
+    return value;
+  };
+
+  // =========================================================
+  // BARCODE / QR CODE SCANNED
+  // =========================================================
+  const handleBarcodeScanned = ({ data, type }) => {
+    // Ignore if already processing/submitting
     if (!data || scanned || submitting) {
       return;
     }
 
-    const code = String(data).trim();
+    const rawValue = String(data).trim();
 
-    if (!code) {
+    if (!rawValue) {
       return;
     }
 
-    console.log("Barcode detected:", code);
+    console.log("=================================");
+    console.log("Barcode detected");
     console.log("Barcode type:", type);
+    console.log("Raw scanned value:", rawValue);
+
+    // -------------------------------------------------------
+    // EXTRACT ONLY PRODUCT CODE
+    // -------------------------------------------------------
+    const code = extractProductCode(rawValue);
+
+    if (!code) {
+      Alert.alert(
+        "Invalid Product",
+        "Unable to read the product code."
+      );
+
+      return;
+    }
+
+    console.log("Extracted product code:", code);
+    console.log("=================================");
+
+    // -------------------------------------------------------
+    // Stop camera callback temporarily
+    // -------------------------------------------------------
+    setScanned(true);
 
     // -------------------------------------------------------
     // Prevent duplicate product
     // -------------------------------------------------------
     if (scannedProducts.includes(code)) {
-      setScanned(true);
-
       Alert.alert(
         "Already Added",
         `${code} is already added to this lead.`
@@ -114,63 +235,20 @@ export default function BarcodeScanner() {
     }
 
     // -------------------------------------------------------
-    // Stop scanner while API is being called
+    // SAVE ONLY PRODUCT CODE LOCALLY
     // -------------------------------------------------------
-    setScanned(true);
+    setScannedProducts((previous) => [
+      ...previous,
+      code,
+    ]);
 
-    try {
-      console.log(
-        "Calling Product Barcode API for:",
-        code
-      );
-
-      // =====================================================
-      // GET /api/products/barcode/{barcode}
-      // =====================================================
-      const productResponse =
-        await getProductByBarcode(code);
-
-      console.log(
-        "Product API Response:",
-        productResponse
-      );
-
-      // -------------------------------------------------------
-      // Check API response
-      // -------------------------------------------------------
-      if (!productResponse) {
-        throw new Error(
-          "Product not found."
-        );
-      }
-
-      // -------------------------------------------------------
-      // Add barcode after successful API response
-      // -------------------------------------------------------
-      setScannedProducts((previous) => [
-        ...previous,
-        code,
-      ]);
-
-      Alert.alert(
-        "Product Found",
-        `${code} has been added successfully.`
-      );
-    } catch (error) {
-      console.error(
-        "Product Barcode API Error:",
-        error
-      );
-
-      Alert.alert(
-        "Product Not Found",
-        error?.message ||
-          `No product found for barcode ${code}.`
-      );
-
-      // Allow user to scan again
-      setScanned(false);
-    }
+    // -------------------------------------------------------
+    // Show success immediately
+    // -------------------------------------------------------
+    Alert.alert(
+      "Product Added",
+      `${code} has been added successfully.`
+    );
   };
 
   // =========================================================
@@ -188,6 +266,7 @@ export default function BarcodeScanner() {
       previous.filter((item) => item !== code)
     );
 
+    // Allow scanner again
     setScanned(false);
   };
 
@@ -222,14 +301,17 @@ export default function BarcodeScanner() {
     try {
       setSubmitting(true);
 
+      // =====================================================
+      // QR LEAD PAYLOAD
+      // =====================================================
       const payload = {
         mobile: mobile.trim(),
 
         customerName: customerName.trim(),
 
         // ---------------------------------------------------
-        // TEMPORARY VALUES
-        // Replace these with logged-in user/store data later.
+        // CURRENT STORE DETAILS
+        // Replace with logged-in user/store data later.
         // ---------------------------------------------------
         storeId: "901",
 
@@ -245,7 +327,9 @@ export default function BarcodeScanner() {
           "htcsd.homeland@praxisretail.in",
 
         // ---------------------------------------------------
-        // ALL SCANNED PRODUCT CODES
+        // ONLY EXTRACTED PRODUCT CODES
+        // Example:
+        // ["600384489", "600384490"]
         // ---------------------------------------------------
         products: scannedProducts,
 
@@ -274,8 +358,7 @@ export default function BarcodeScanner() {
       );
 
       // =====================================================
-      // API.JS RETURNS DATA DIRECTLY
-      // Therefore use response.success
+      // SUCCESS
       // =====================================================
       if (response?.success) {
         Alert.alert(
@@ -358,9 +441,7 @@ export default function BarcodeScanner() {
             Enter customer details to create a new lead
           </Text>
 
-          {/* =================================================
-              MOBILE
-          ================================================= */}
+          {/* MOBILE */}
           <View style={styles.inputContainer}>
             <Text style={styles.inputLabel}>
               Customer Mobile Number
@@ -390,9 +471,7 @@ export default function BarcodeScanner() {
             </View>
           </View>
 
-          {/* =================================================
-              CUSTOMER NAME
-          ================================================= */}
+          {/* CUSTOMER NAME */}
           <View style={styles.inputContainer}>
             <Text style={styles.inputLabel}>
               Customer Name
@@ -416,9 +495,7 @@ export default function BarcodeScanner() {
             </View>
           </View>
 
-          {/* =================================================
-              NEXT BUTTON
-          ================================================= */}
+          {/* NEXT BUTTON */}
           <Pressable
             style={styles.nextButton}
             onPress={handleNext}
@@ -471,7 +548,7 @@ export default function BarcodeScanner() {
 
         <Text style={styles.subText}>
           We need camera access to scan product
-          barcodes.
+          barcodes and QR codes.
         </Text>
 
         <Pressable
@@ -509,11 +586,16 @@ export default function BarcodeScanner() {
         facing="back"
         barcodeScannerSettings={{
           barcodeTypes: [
+            "qr",
             "ean13",
             "ean8",
-            "code128",
             "upc_a",
             "upc_e",
+            "code128",
+            "code39",
+            "code93",
+            "codabar",
+            "itf14",
           ],
         }}
         onBarcodeScanned={
@@ -563,7 +645,7 @@ export default function BarcodeScanner() {
         <Text style={styles.scanText}>
           {scanned
             ? "Product added"
-            : "Scan product barcode"}
+            : "Scan product barcode or QR code"}
         </Text>
       </View>
 
@@ -985,6 +1067,7 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
     fontWeight: "600",
+    textAlign: "center",
   },
 
   // =========================================================

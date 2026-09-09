@@ -91,7 +91,7 @@ export default function FitterLayout() {
       />
 
 
- {/* Fitting Detail - NOT a bottom tab */}
+      {/* Fitting Detail - NOT a bottom tab */}
       <Tabs.Screen
         name="fitting-detail"
         options={{
@@ -100,20 +100,6 @@ export default function FitterLayout() {
         }}
       />
 
- <Tabs.Screen
-  name="barcode"
-  options={{
-    title: "New Lead",
-    tabBarIcon: ({ color, size }) => (
-      <MaterialIcons
-        name="person-add"
-        color={color}
-        size={size}
-      />
-    ),
-  }}
-/>
-      
       {/* Existing Profile */}
       <Tabs.Screen
         name="profile"
@@ -129,7 +115,7 @@ export default function FitterLayout() {
         }}
       />
 
-     
+
     </Tabs>
   );
 }
