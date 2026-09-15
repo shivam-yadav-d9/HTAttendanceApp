@@ -771,7 +771,7 @@ export default function BarcodeScanner() {
             <MaterialIcons
               name="person-add"
               size={38}
-              color="#1565C0"
+              color="#EA580C"
             />
           </View>
 
@@ -867,7 +867,7 @@ export default function BarcodeScanner() {
       <View style={styles.centerContainer}>
         <ActivityIndicator
           size="large"
-          color="#1565C0"
+          color="#EA580C"
         />
 
         <Text style={styles.permissionText}>
@@ -886,7 +886,7 @@ export default function BarcodeScanner() {
         <MaterialIcons
           name="person-off"
           size={55}
-          color="#1565C0"
+          color="#EA580C"
         />
 
         <Text style={styles.permissionText}>
@@ -918,7 +918,7 @@ export default function BarcodeScanner() {
       <View style={styles.centerContainer}>
         <ActivityIndicator
           size="large"
-          color="#1565C0"
+          color="#EA580C"
         />
 
         <Text style={styles.permissionText}>
@@ -937,7 +937,7 @@ export default function BarcodeScanner() {
         <MaterialIcons
           name="camera-alt"
           size={55}
-          color="#1565C0"
+          color="#EA580C"
         />
 
         <Text style={styles.permissionText}>
@@ -1168,7 +1168,7 @@ export default function BarcodeScanner() {
             <MaterialIcons
               name="qr-code-scanner"
               size={21}
-              color="#1565C0"
+              color="#EA580C"
             />
 
             <Text style={styles.scanAgainText}>
@@ -1250,7 +1250,7 @@ const styles = StyleSheet.create({
     width: 76,
     height: 76,
     borderRadius: 38,
-    backgroundColor: "#E8F1FB",
+    backgroundColor: "#FDEBDD",
     justifyContent: "center",
     alignItems: "center",
     alignSelf: "center",
@@ -1303,7 +1303,7 @@ const styles = StyleSheet.create({
 
   nextButton: {
     height: 54,
-    backgroundColor: "#1565C0",
+    backgroundColor: "#EA580C",
     borderRadius: 12,
     flexDirection: "row",
     justifyContent: "center",
@@ -1349,7 +1349,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
-    backgroundColor: "#1565C0",
+    backgroundColor: "#EA580C",
   },
 
   permissionButtonText: {
@@ -1365,7 +1365,7 @@ const styles = StyleSheet.create({
   },
 
   backButtonText: {
-    color: "#1565C0",
+    color: "#EA580C",
     fontSize: 15,
     fontWeight: "600",
   },
@@ -1531,7 +1531,7 @@ const styles = StyleSheet.create({
 
   productCount: {
     alignItems: "center",
-    backgroundColor: "#E8F1FB",
+    backgroundColor: "#FDEBDD",
     paddingHorizontal: 14,
     paddingVertical: 7,
     borderRadius: 10,
@@ -1540,7 +1540,7 @@ const styles = StyleSheet.create({
   productCountNumber: {
     fontSize: 17,
     fontWeight: "700",
-    color: "#1565C0",
+    color: "#EA580C",
   },
 
   productCountLabel: {
@@ -1610,7 +1610,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     height: 46,
     borderWidth: 1,
-    borderColor: "#1565C0",
+    borderColor: "#EA580C",
     borderRadius: 10,
     flexDirection: "row",
     justifyContent: "center",
@@ -1618,7 +1618,7 @@ const styles = StyleSheet.create({
   },
 
   scanAgainText: {
-    color: "#1565C0",
+    color: "#EA580C",
     fontSize: 15,
     fontWeight: "700",
     marginLeft: 7,

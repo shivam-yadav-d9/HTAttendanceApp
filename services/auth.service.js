@@ -19,7 +19,7 @@ class AuthService {
         await AsyncStorage.setItem('employeeNumber', response.data.employeeNumber);
 
         // Start location tracking after login
-        await locationService.startTracking();
+        // await locationService.startTracking();
 
         return {
           success: true,
@@ -77,7 +77,7 @@ class AuthService {
         await AsyncStorage.setItem('userData', JSON.stringify(response.data));
 
         // Start location tracking after login
-        await locationService.startTracking();
+        // await locationService.startTracking();
 
         return {
           success: true,
