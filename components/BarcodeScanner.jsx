@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -12,10 +13,21 @@ import {
   View,
 } from "react-native";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { MaterialIcons } from "@expo/vector-icons";
 
 import api from "../services/api";
+
+// =========================================================
+// ZOOM SWEEP CONFIG
+// =========================================================
+const ZOOM_MIN = 0;
+const ZOOM_MAX = 0.55;
+const ZOOM_TICK_MS = 260;
+const ZOOM_SWEEP_STEP = 0.055;
+const ZOOM_ANIM_MS = 220;
+const TAP_ZOOM_BOOST = 0.25;
 
 export default function BarcodeScanner() {
   // =========================================================
@@ -32,10 +44,27 @@ export default function BarcodeScanner() {
   const [customerName, setCustomerName] = useState("");
 
   // =========================================================
+  // LOGGED-IN USER
+  // Loaded from AsyncStorage -> userData
+  // =========================================================
+  const [user, setUser] = useState(null);
+  const [loadingUser, setLoadingUser] = useState(true);
+
+  // =========================================================
   // CAMERA
   // =========================================================
-  const [permission, requestPermission] =
-    useCameraPermissions();
+  const [permission, requestPermission] = useCameraPermissions();
+
+  // =========================================================
+  // ZOOM
+  // =========================================================
+  const [zoomTarget, setZoomTarget] = useState(ZOOM_MIN);
+
+  const animatedZoom = useRef(new Animated.Value(ZOOM_MIN)).current;
+
+  const currentZoomRef = useRef(ZOOM_MIN);
+
+  const zoomSweepRef = useRef(null);
 
   // =========================================================
   // PRODUCTS
@@ -45,8 +74,149 @@ export default function BarcodeScanner() {
   // Prevent multiple camera callbacks for same scan
   const [scanned, setScanned] = useState(false);
 
+  // Short cooldown so back-to-back scans don't double-fire
+  const scanCooldownRef = useRef(false);
+
   // Submit loading
   const [submitting, setSubmitting] = useState(false);
+
+  // =========================================================
+  // LOAD LOGGED-IN USER FROM ASYNC STORAGE
+  //
+  // auth.service.js stores:
+  // AsyncStorage.setItem("userData", JSON.stringify(response.data))
+  // =========================================================
+  useEffect(() => {
+    const loadUserData = async () => {
+      try {
+        setLoadingUser(true);
+
+        const storedUser = await AsyncStorage.getItem("userData");
+
+        console.log("=================================");
+        console.log("Loading logged-in user");
+        console.log("userData exists:", !!storedUser);
+
+        if (!storedUser) {
+          console.log("No userData found in AsyncStorage.");
+          console.log("=================================");
+          setUser(null);
+          return;
+        }
+
+        const parsedUser = JSON.parse(storedUser);
+
+        console.log("Logged-in user:", parsedUser);
+        console.log("Employee Number:", parsedUser?.employeeNumber);
+        console.log("Name:", parsedUser?.name);
+        console.log("Email:", parsedUser?.email);
+        console.log("Site Code:", parsedUser?.siteCode);
+        console.log("Site ID:", parsedUser?.siteId);
+        console.log("Location:", parsedUser?.location);
+        console.log("Employee Location SAP:", parsedUser?.employeeLocationSAP);
+
+        setUser(parsedUser);
+      } catch (error) {
+        console.error(
+          "Failed to load userData:",
+          error?.message || error
+        );
+
+        setUser(null);
+      } finally {
+        setLoadingUser(false);
+      }
+    };
+
+    loadUserData();
+  }, []);
+
+  // =========================================================
+  // SMOOTH ZOOM HELPER
+  // =========================================================
+  const animateZoomTo = (next, duration = ZOOM_ANIM_MS) => {
+    const clamped = Math.max(
+      ZOOM_MIN,
+      Math.min(ZOOM_MAX, next)
+    );
+
+    currentZoomRef.current = clamped;
+    setZoomTarget(clamped);
+
+    Animated.timing(animatedZoom, {
+      toValue: clamped,
+      duration,
+      useNativeDriver: false,
+    }).start();
+  };
+
+  // =========================================================
+  // AUTO ZOOM-SWEEP
+  // =========================================================
+  useEffect(() => {
+    const cameraActive =
+      step === 2 &&
+      permission?.granted &&
+      !submitting;
+
+    // Clear existing timer
+    if (zoomSweepRef.current) {
+      clearInterval(zoomSweepRef.current);
+      zoomSweepRef.current = null;
+    }
+
+    if (!cameraActive || scanned) {
+      return;
+    }
+
+    zoomSweepRef.current = setInterval(() => {
+      const previous = currentZoomRef.current;
+
+      let next = previous + ZOOM_SWEEP_STEP;
+
+      if (next >= ZOOM_MAX) {
+        next = ZOOM_MIN;
+
+        animateZoomTo(next, 140);
+
+        return;
+      }
+
+      animateZoomTo(next, ZOOM_ANIM_MS);
+    }, ZOOM_TICK_MS);
+
+    return () => {
+      if (zoomSweepRef.current) {
+        clearInterval(zoomSweepRef.current);
+        zoomSweepRef.current = null;
+      }
+    };
+  }, [
+    step,
+    permission?.granted,
+    submitting,
+    scanned,
+    animatedZoom,
+  ]);
+
+  // =========================================================
+  // TAP-TO-FOCUS / ZOOM ASSIST
+  // =========================================================
+  const handleTapToAssist = () => {
+    if (scanned || submitting) {
+      return;
+    }
+
+    const previous = currentZoomRef.current;
+
+    let next = previous + TAP_ZOOM_BOOST;
+
+    if (next >= ZOOM_MAX) {
+      next = ZOOM_MIN;
+    }
+
+    animateZoomTo(next, 160);
+  };
 
   // =========================================================
   // STEP 1 -> NEXT
@@ -60,6 +230,7 @@ export default function BarcodeScanner() {
         "Required",
         "Please enter customer mobile number."
       );
+
       return;
     }
 
@@ -68,6 +239,7 @@ export default function BarcodeScanner() {
         "Invalid Mobile Number",
         "Please enter a valid 10-digit mobile number."
       );
+
       return;
     }
 
@@ -76,6 +248,7 @@ export default function BarcodeScanner() {
         "Required",
         "Please enter customer name."
       );
+
       return;
     }
 
@@ -114,14 +287,15 @@ export default function BarcodeScanner() {
         .filter(Boolean);
 
       if (pathParts.length > 0) {
-        const lastPart = pathParts[pathParts.length - 1];
+        const lastPart =
+          pathParts[pathParts.length - 1];
 
         // If last part is numeric, use it
         if (/^\d+$/.test(lastPart)) {
           return lastPart;
         }
 
-        // If last part contains a number, extract the number
+        // If last part contains a number, extract number
         const numberMatch = lastPart.match(/\d+$/);
 
         if (numberMatch) {
@@ -130,7 +304,7 @@ export default function BarcodeScanner() {
       }
     } catch (error) {
       // Not a URL.
-      // Continue below and treat it as a normal barcode.
+      // Continue below and treat it as normal barcode.
     }
 
     // -------------------------------------------------------
@@ -148,9 +322,10 @@ export default function BarcodeScanner() {
       .filter(Boolean);
 
     if (parts.length > 1) {
-      const lastPart = parts[parts.length - 1];
+      const lastPart =
+        parts[parts.length - 1];
 
-      // Remove query string / hash if present
+      // Remove query string / hash
       const cleanLastPart = lastPart
         .split("?")[0]
         .split("#")[0]
@@ -160,7 +335,8 @@ export default function BarcodeScanner() {
         return cleanLastPart;
       }
 
-      const numberMatch = cleanLastPart.match(/\d+$/);
+      const numberMatch =
+        cleanLastPart.match(/\d+$/);
 
       if (numberMatch) {
         return numberMatch[0];
@@ -184,8 +360,13 @@ export default function BarcodeScanner() {
   // BARCODE / QR CODE SCANNED
   // =========================================================
   const handleBarcodeScanned = ({ data, type }) => {
-    // Ignore if already processing/submitting
-    if (!data || scanned || submitting) {
+    // Ignore if already processing/submitting/cooldown
+    if (
+      !data ||
+      scanned ||
+      submitting ||
+      scanCooldownRef.current
+    ) {
       return;
     }
 
@@ -199,6 +380,10 @@ export default function BarcodeScanner() {
     console.log("Barcode detected");
     console.log("Barcode type:", type);
     console.log("Raw scanned value:", rawValue);
+    console.log(
+      "Zoom level at scan:",
+      currentZoomRef.current
+    );
 
     // -------------------------------------------------------
     // EXTRACT ONLY PRODUCT CODE
@@ -218,9 +403,23 @@ export default function BarcodeScanner() {
     console.log("=================================");
 
     // -------------------------------------------------------
-    // Stop camera callback temporarily
+    // Stop camera callback temporarily + cooldown
     // -------------------------------------------------------
     setScanned(true);
+
+    scanCooldownRef.current = true;
+
+    // -------------------------------------------------------
+    // Stop zoom sweep
+    // -------------------------------------------------------
+    if (zoomSweepRef.current) {
+      clearInterval(zoomSweepRef.current);
+
+      zoomSweepRef.current = null;
+    }
+
+    // Reset zoom
+    animateZoomTo(ZOOM_MIN, 200);
 
     // -------------------------------------------------------
     // Prevent duplicate product
@@ -230,6 +429,10 @@ export default function BarcodeScanner() {
         "Already Added",
         `${code} is already added to this lead.`
       );
+
+      setTimeout(() => {
+        scanCooldownRef.current = false;
+      }, 400);
 
       return;
     }
@@ -243,12 +446,17 @@ export default function BarcodeScanner() {
     ]);
 
     // -------------------------------------------------------
-    // Show success immediately
+    // Show success
     // -------------------------------------------------------
     Alert.alert(
       "Product Added",
       `${code} has been added successfully.`
     );
+
+    // Release cooldown
+    setTimeout(() => {
+      scanCooldownRef.current = false;
+    }, 400);
   };
 
   // =========================================================
@@ -256,6 +464,10 @@ export default function BarcodeScanner() {
   // =========================================================
   const scanAgain = () => {
     setScanned(false);
+
+    scanCooldownRef.current = false;
+
+    animateZoomTo(ZOOM_MIN, 180);
   };
 
   // =========================================================
@@ -268,6 +480,10 @@ export default function BarcodeScanner() {
 
     // Allow scanner again
     setScanned(false);
+
+    scanCooldownRef.current = false;
+
+    animateZoomTo(ZOOM_MIN, 180);
   };
 
   // =========================================================
@@ -279,6 +495,7 @@ export default function BarcodeScanner() {
         "Error",
         "Customer mobile number is missing."
       );
+
       return;
     }
 
@@ -287,6 +504,7 @@ export default function BarcodeScanner() {
         "Error",
         "Customer name is missing."
       );
+
       return;
     }
 
@@ -295,6 +513,103 @@ export default function BarcodeScanner() {
         "No Products",
         "Please scan at least one product."
       );
+
+      return;
+    }
+
+    // =====================================================
+    // CHECK LOGGED-IN USER
+    // =====================================================
+    if (!user) {
+      Alert.alert(
+        "User Data Missing",
+        "Logged-in user information could not be found. Please login again."
+      );
+
+      return;
+    }
+
+    // =====================================================
+    // GET REAL USER VALUES
+    // =====================================================
+
+    const employeeNumber =
+      user?.employeeNumber
+        ? String(user.employeeNumber)
+        : "";
+
+    const employeeName =
+      user?.name
+        ? String(user.name)
+        : "";
+
+    const employeeEmail =
+      user?.email
+        ? String(user.email)
+        : "";
+
+    const storeId =
+      user?.siteCode ??
+      user?.siteId ??
+      "";
+
+    const storeName =
+      user?.employeeLocationSAP ||
+      user?.location ||
+      "";
+
+    // Convert store ID to string
+    const finalStoreId =
+      storeId !== null &&
+        storeId !== undefined
+        ? String(storeId)
+        : "";
+
+    // =====================================================
+    // VALIDATE REQUIRED USER DATA
+    // =====================================================
+    if (!employeeNumber) {
+      Alert.alert(
+        "User Data Missing",
+        "Employee number is missing from the logged-in user data."
+      );
+
+      return;
+    }
+
+    if (!employeeName) {
+      Alert.alert(
+        "User Data Missing",
+        "Employee name is missing from the logged-in user data."
+      );
+
+      return;
+    }
+
+    if (!employeeEmail) {
+      Alert.alert(
+        "User Data Missing",
+        "Employee email is missing from the logged-in user data."
+      );
+
+      return;
+    }
+
+    if (!finalStoreId) {
+      Alert.alert(
+        "Store Data Missing",
+        "Store ID is missing from the logged-in user data."
+      );
+
+      return;
+    }
+
+    if (!storeName) {
+      Alert.alert(
+        "Store Data Missing",
+        "Store name/location is missing from the logged-in user data."
+      );
+
       return;
     }
 
@@ -303,28 +618,33 @@ export default function BarcodeScanner() {
 
       // =====================================================
       // QR LEAD PAYLOAD
+      // REAL LOGGED-IN USER DATA
       // =====================================================
       const payload = {
+        // ---------------------------------------------------
+        // CUSTOMER DETAILS
+        // ---------------------------------------------------
         mobile: mobile.trim(),
 
         customerName: customerName.trim(),
 
         // ---------------------------------------------------
-        // CURRENT STORE DETAILS
-        // Replace with logged-in user/store data later.
+        // REAL STORE DETAILS
+        // FROM ASYNC STORAGE -> userData
         // ---------------------------------------------------
-        storeId: "901",
+        storeId: finalStoreId,
 
-        storeName:
-          "HT Mumbai - Jogeshwari",
+        storeName: storeName,
 
-        salesmanId: "101",
+        // ---------------------------------------------------
+        // REAL SALESMAN / EMPLOYEE DETAILS
+        // FROM ASYNC STORAGE -> userData
+        // ---------------------------------------------------
+        salesmanId: employeeNumber,
 
-        salesmanName:
-          "Rahul Sharma",
+        salesmanName: employeeName,
 
-        salesmanEmail:
-          "htcsd.homeland@praxisretail.in",
+        salesmanEmail: employeeEmail,
 
         // ---------------------------------------------------
         // ONLY EXTRACTED PRODUCT CODES
@@ -333,15 +653,28 @@ export default function BarcodeScanner() {
         // ---------------------------------------------------
         products: scannedProducts,
 
-        submittedAt:
-          new Date().toISOString(),
+        // ---------------------------------------------------
+        // SUBMISSION DETAILS
+        // ---------------------------------------------------
+        submittedAt: new Date().toISOString(),
 
         status: "SUBMITTED",
       };
 
       console.log(
-        "QR Lead Payload:",
+        "================================="
+      );
+
+      console.log(
+        "QR LEAD PAYLOAD"
+      );
+
+      console.log(
         JSON.stringify(payload, null, 2)
+      );
+
+      console.log(
+        "================================="
       );
 
       // =====================================================
@@ -375,7 +708,7 @@ export default function BarcodeScanner() {
         Alert.alert(
           "Submission Failed",
           response?.message ||
-            "Unable to submit the lead."
+          "Unable to submit the lead."
         );
       }
     } catch (error) {
@@ -387,7 +720,7 @@ export default function BarcodeScanner() {
       Alert.alert(
         "Submission Failed",
         error?.message ||
-          "Something went wrong while submitting the lead."
+        "Something went wrong while submitting the lead."
       );
     } finally {
       setSubmitting(false);
@@ -399,10 +732,18 @@ export default function BarcodeScanner() {
   // =========================================================
   const resetLead = () => {
     setStep(1);
+
     setMobile("");
+
     setCustomerName("");
+
     setScannedProducts([]);
+
     setScanned(false);
+
+    scanCooldownRef.current = false;
+
+    animateZoomTo(ZOOM_MIN, 0);
   };
 
   // =========================================================
@@ -420,7 +761,9 @@ export default function BarcodeScanner() {
         }
       >
         <ScrollView
-          contentContainerStyle={styles.formContent}
+          contentContainerStyle={
+            styles.formContent
+          }
           keyboardShouldPersistTaps="handled"
         >
           {/* ICON */}
@@ -438,7 +781,8 @@ export default function BarcodeScanner() {
           </Text>
 
           <Text style={styles.formSubtitle}>
-            Enter customer details to create a new lead
+            Enter customer details to create a
+            new lead
           </Text>
 
           {/* MOBILE */}
@@ -516,12 +860,66 @@ export default function BarcodeScanner() {
   }
 
   // =========================================================
+  // USER DATA LOADING
+  // =========================================================
+  if (loadingUser) {
+    return (
+      <View style={styles.centerContainer}>
+        <ActivityIndicator
+          size="large"
+          color="#1565C0"
+        />
+
+        <Text style={styles.permissionText}>
+          Loading user information...
+        </Text>
+      </View>
+    );
+  }
+
+  // =========================================================
+  // USER DATA NOT FOUND
+  // =========================================================
+  if (!user) {
+    return (
+      <View style={styles.centerContainer}>
+        <MaterialIcons
+          name="person-off"
+          size={55}
+          color="#1565C0"
+        />
+
+        <Text style={styles.permissionText}>
+          User Information Not Found
+        </Text>
+
+        <Text style={styles.subText}>
+          Please login again before creating a
+          customer lead.
+        </Text>
+
+        <Pressable
+          style={styles.backButton}
+          onPress={() => setStep(1)}
+        >
+          <Text style={styles.backButtonText}>
+            Back
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  // =========================================================
   // CAMERA PERMISSION LOADING
   // =========================================================
   if (!permission) {
     return (
       <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" />
+        <ActivityIndicator
+          size="large"
+          color="#1565C0"
+        />
 
         <Text style={styles.permissionText}>
           Checking camera permission...
@@ -584,9 +982,11 @@ export default function BarcodeScanner() {
       <CameraView
         style={StyleSheet.absoluteFill}
         facing="back"
+        zoom={zoomTarget}
+        autofocus="on"
         barcodeScannerSettings={{
           barcodeTypes: [
-            "qr",
+            // Barcodes
             "ean13",
             "ean8",
             "upc_a",
@@ -625,7 +1025,9 @@ export default function BarcodeScanner() {
             Scan Products
           </Text>
 
-          <Text style={styles.scannerHeaderCustomer}>
+          <Text
+            style={styles.scannerHeaderCustomer}
+          >
             {customerName}
           </Text>
         </View>
@@ -634,11 +1036,17 @@ export default function BarcodeScanner() {
       {/* =====================================================
           SCANNER BOX
       ===================================================== */}
-      <View style={styles.overlay}>
+      <Pressable
+        style={styles.overlay}
+        onPress={handleTapToAssist}
+      >
         <View style={styles.scannerBox}>
           <View style={styles.cornerTopLeft} />
+
           <View style={styles.cornerTopRight} />
+
           <View style={styles.cornerBottomLeft} />
+
           <View style={styles.cornerBottomRight} />
         </View>
 
@@ -647,7 +1055,13 @@ export default function BarcodeScanner() {
             ? "Product added"
             : "Scan product barcode or QR code"}
         </Text>
-      </View>
+
+        {!scanned && (
+          <Text style={styles.zoomHintText}>
+            Too far? Tap here to zoom in
+          </Text>
+        )}
+      </Pressable>
 
       {/* =====================================================
           BOTTOM PANEL
@@ -670,7 +1084,9 @@ export default function BarcodeScanner() {
           </View>
 
           <View style={styles.productCount}>
-            <Text style={styles.productCountNumber}>
+            <Text
+              style={styles.productCountNumber}
+            >
               {scannedProducts.length}
             </Text>
 
@@ -695,9 +1111,7 @@ export default function BarcodeScanner() {
                   style={styles.productItem}
                 >
                   {/* GREEN TICK */}
-                  <View
-                    style={styles.tickCircle}
-                  >
+                  <View style={styles.tickCircle}>
                     <MaterialIcons
                       name="check"
                       size={18}
@@ -706,21 +1120,15 @@ export default function BarcodeScanner() {
                   </View>
 
                   {/* PRODUCT DETAILS */}
-                  <View
-                    style={styles.productInfo}
-                  >
+                  <View style={styles.productInfo}>
                     <Text
-                      style={
-                        styles.productNumber
-                      }
+                      style={styles.productNumber}
                     >
                       Product {index + 1}
                     </Text>
 
                     <Text
-                      style={
-                        styles.productCode
-                      }
+                      style={styles.productCode}
                     >
                       {code}
                     </Text>
@@ -731,9 +1139,7 @@ export default function BarcodeScanner() {
                     onPress={() =>
                       removeProduct(code)
                     }
-                    style={
-                      styles.removeButton
-                    }
+                    style={styles.removeButton}
                   >
                     <MaterialIcons
                       name="close"
@@ -778,7 +1184,7 @@ export default function BarcodeScanner() {
           style={[
             styles.submitButton,
             scannedProducts.length === 0 &&
-              styles.submitButtonDisabled,
+            styles.submitButtonDisabled,
           ]}
           onPress={submitLead}
           disabled={
@@ -987,8 +1393,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor:
-      "rgba(0,0,0,0.55)",
+    backgroundColor: "rgba(0,0,0,0.55)",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
@@ -1067,6 +1472,13 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
     fontWeight: "600",
+    textAlign: "center",
+  },
+
+  zoomHintText: {
+    marginTop: 8,
+    color: "#D1D5DB",
+    fontSize: 12,
     textAlign: "center",
   },
 

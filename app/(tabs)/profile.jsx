@@ -90,6 +90,9 @@ export default function Profile() {
     );
   }
 
+  const isActive = user?.isActive !== false; // treat missing as active
+  const hasExited = !!user?.exitDate;
+
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       {/* Header */}
@@ -100,6 +103,17 @@ export default function Profile() {
         <Text style={styles.name}>{user?.name || "N/A"}</Text>
         <Text style={styles.designation}>{user?.jobTitle || user?.role || "Employee"}</Text>
 
+        <View style={styles.statusBadge}>
+          <View
+            style={[
+              styles.statusDot,
+              { backgroundColor: isActive ? "#2ECC71" : "#C0392B" },
+            ]}
+          />
+          <Text style={styles.statusText}>
+            {isActive ? "Active" : "Inactive"}
+          </Text>
+        </View>
       </View>
 
       {/* Store & Manager Section */}
@@ -109,7 +123,7 @@ export default function Profile() {
         <InfoRow icon="location-outline" label="STORE CODE · REGION" value={`${user?.siteCode || "N/A"} · ${user?.city || "N/A"}`} />
         <InfoRow icon="business-outline" label="CITY · STATE" value={`${user?.city || "N/A"} · ${user?.state || "N/A"}`} />
         <InfoRow icon="people-outline" label="REPORTING MANAGER" value={user?.reportingTo || "N/A"} />
-        <InfoRow icon="mail-outline" label="MANAGER EMAIL" value={user?.reportingManagerEmail || "N/A"} />
+        <InfoRow icon="card-outline" label="MANAGER EMP. NO." value={user?.reportingManagerEmployeeNumber || "N/A"} />
       </View>
 
       {/* Employee Details Section */}
@@ -119,8 +133,12 @@ export default function Profile() {
         <InfoRow icon="call-outline" label="MOBILE" value={user?.phone?.toString() || "N/A"} />
         <InfoRow icon="mail-outline" label="EMAIL" value={user?.email || "N/A"} />
         <InfoRow icon="business-outline" label="DEPARTMENT" value={user?.department || "N/A"} />
+        <InfoRow icon="layers-outline" label="DEPARTMENT CATEGORY" value={user?.departmentCategory || "N/A"} />
         <InfoRow icon="briefcase-outline" label="DESIGNATION" value={user?.jobTitle || user?.role || "N/A"} />
         <InfoRow icon="calendar-outline" label="JOINING DATE" value={formatDate(user?.dateJoined)} />
+        {hasExited && (
+          <InfoRow icon="calendar-outline" label="EXIT DATE" value={formatDate(user?.exitDate)} />
+        )}
       </View>
 
       {/* Additional Details Section */}
@@ -137,6 +155,7 @@ export default function Profile() {
         <InfoRow icon="map-outline" label="EMPLOYEE ZONE" value={user?.employeeZone || "N/A"} />
         <InfoRow icon="cash-outline" label="COST CENTER NO" value={user?.costCenterNo || "N/A"} />
         <InfoRow icon="document-text-outline" label="COST CENTER DESCRIPTION" value={user?.costCenterDescription || "N/A"} />
+        <InfoRow icon="pricetag-outline" label="PROFIT CENTRE" value={user?.profitCentre || "N/A"} />
       </View>
 
       {/* Logout Button */}
