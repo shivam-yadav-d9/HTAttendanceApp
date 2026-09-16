@@ -1,3 +1,4 @@
+
 // services/product.service.js
 
 import api from "./api";
@@ -11,6 +12,7 @@ export const submitQRLead = async ({
   salesmanName,
   salesmanEmail,
   products,
+  remarks,
 }) => {
   try {
     if (!products || products.length === 0) {
@@ -26,6 +28,7 @@ export const submitQRLead = async ({
       salesmanName,
       salesmanEmail,
       products,
+      remarks,
       submittedAt: new Date().toISOString(),
       status: "SUBMITTED",
     };

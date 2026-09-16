@@ -1,3 +1,4 @@
+
 import { MaterialIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
@@ -42,11 +43,48 @@ export default function LoginScreen() {
 
       const user = JSON.parse(userData);
 
-      // Show location disclosure before starting location tracking
+      // User is already logged in.
+      // Do NOT show the location disclosure when simply
+      // reopening the app with an active session.
       setPendingUser(user);
-      setShowLocationDisclosure(true);
+      setChecking(true);
+
+      const trackingStarted = await locationService.startTracking();
+
+      if (!trackingStarted) {
+        await authService.logout();
+        setPendingUser(null);
+
+        Alert.alert(
+          "Location Permission Required",
+          "Location access is required for attendance tracking."
+        );
+
+        return;
+      }
+
+      setPendingUser(null);
+
+      const jobTitle = (user.jobTitle || "").toUpperCase();
+
+      if (jobTitle === "FITTER") {
+        router.replace("/(fitter)/attendance");
+        return;
+      }
+
+      if (
+        jobTitle === "LOGISTICS EXECUTIVE" ||
+        jobTitle === "DELIVERY EXECUTIVE"
+      ) {
+        router.replace("/(delivery)/attendance");
+        return;
+      }
+
+      router.replace("/(tabs)/home");
     } catch (error) {
-      console.log(error);
+      console.log("Existing login check error:", error);
+    } finally {
+      setChecking(false);
     }
   };
 
@@ -79,9 +117,48 @@ export default function LoginScreen() {
         if (result.success) {
           const user = result.user;
 
-          // Show location disclosure before starting location tracking
+          // Auto-login is an existing authenticated session.
+          // Do NOT show the location disclosure when the app opens
+          // and logs the user in automatically.
           setPendingUser(user);
-          setShowLocationDisclosure(true);
+          setChecking(true);
+
+          const trackingStarted =
+            await locationService.startTracking();
+
+          if (!trackingStarted) {
+            await authService.logout();
+            setPendingUser(null);
+
+            Alert.alert(
+              "Location Permission Required",
+              "Location access is required for attendance tracking."
+            );
+
+            return;
+          }
+
+          setPendingUser(null);
+
+          const jobTitle = (user.jobTitle || "").toUpperCase();
+
+          if (jobTitle === "FITTER") {
+            Alert.alert("Success", `Welcome ${user.name}`);
+            router.replace("/(fitter)/attendance");
+            return;
+          }
+
+          if (
+            jobTitle === "LOGISTICS EXECUTIVE" ||
+            jobTitle === "DELIVERY EXECUTIVE"
+          ) {
+            Alert.alert("Success", `Welcome ${user.name}`);
+            router.replace("/(delivery)/attendance");
+            return;
+          }
+
+          Alert.alert("Success", `Welcome ${user.name}`);
+          router.replace("/(tabs)/home");
         }
       } catch (e) {
         console.log("Auto login error:", e);
@@ -107,6 +184,12 @@ export default function LoginScreen() {
       const trackingStarted = await locationService.startTracking();
 
       if (!trackingStarted) {
+        // Tracking failed, so do not keep the disclosure
+        // acceptance as valid.
+        await AsyncStorage.removeItem(
+          "locationDisclosureAccepted"
+        );
+
         await authService.logout();
 
         setPendingUser(null);
@@ -118,6 +201,9 @@ export default function LoginScreen() {
 
         return;
       }
+
+      // Location tracking successfully started.
+      // The disclosure will be shown again on the next login.
 
       const user = pendingUser;
       setPendingUser(null);
@@ -143,6 +229,19 @@ export default function LoginScreen() {
       router.replace("/(tabs)/home");
     } catch (error) {
       console.log("Location tracking error:", error);
+
+      // Tracking failed, so make sure the acceptance flag
+      // does not prevent the disclosure from appearing again.
+      try {
+        await AsyncStorage.removeItem(
+          "locationDisclosureAccepted"
+        );
+      } catch (storageError) {
+        console.log(
+          "Location disclosure storage cleanup error:",
+          storageError
+        );
+      }
 
       try {
         await authService.logout();
@@ -207,8 +306,8 @@ export default function LoginScreen() {
         JSON.stringify({ username, password })
       );
 
-      // Do NOT request location permission here.
-      // The location disclosure must appear first.
+      // Show the location disclosure every time the user logs in.
+      // Location tracking starts only after the user taps "Agree & Continue".
       setPendingUser(user);
       setShowLocationDisclosure(true);
     } catch (error) {

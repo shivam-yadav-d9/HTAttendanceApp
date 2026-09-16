@@ -44,6 +44,11 @@ export default function BarcodeScanner() {
   const [customerName, setCustomerName] = useState("");
 
   // =========================================================
+  // REMARKS
+  // =========================================================
+  const [remarks, setRemarks] = useState("");
+
+  // =========================================================
   // LOGGED-IN USER
   // Loaded from AsyncStorage -> userData
   // =========================================================
@@ -388,6 +393,19 @@ export default function BarcodeScanner() {
     // -------------------------------------------------------
     // EXTRACT ONLY PRODUCT CODE
     // -------------------------------------------------------
+    // -------------------------------------------------------
+    // ONLY ACCEPT PLAIN NUMERIC BARCODES
+    // Reject URLs / any non-numeric scanned value
+    // -------------------------------------------------------
+    if (!/^\d+$/.test(rawValue)) {
+      Alert.alert(
+        "Invalid Barcode",
+        "Please scan barcode properly."
+      );
+
+      return;
+    }
+
     const code = extractProductCode(rawValue);
 
     if (!code) {
@@ -654,6 +672,11 @@ export default function BarcodeScanner() {
         products: scannedProducts,
 
         // ---------------------------------------------------
+        // REMARKS (OPTIONAL)
+        // ---------------------------------------------------
+        remarks: remarks.trim(),
+
+        // ---------------------------------------------------
         // SUBMISSION DETAILS
         // ---------------------------------------------------
         submittedAt: new Date().toISOString(),
@@ -736,6 +759,8 @@ export default function BarcodeScanner() {
     setMobile("");
 
     setCustomerName("");
+
+    setRemarks("");
 
     setScannedProducts([]);
 
@@ -1178,6 +1203,24 @@ export default function BarcodeScanner() {
         )}
 
         {/* ===================================================
+            REMARKS
+        =================================================== */}
+        <View style={styles.remarksContainer}>
+          <Text style={styles.remarksLabel}>
+            Remarks (optional)
+          </Text>
+
+          <TextInput
+            style={styles.remarksInput}
+            value={remarks}
+            onChangeText={setRemarks}
+            placeholder="Add any remarks..."
+            placeholderTextColor="#999"
+            multiline
+          />
+        </View>
+
+        {/* ===================================================
             SUBMIT LEAD
         =================================================== */}
         <Pressable
@@ -1600,6 +1643,34 @@ const styles = StyleSheet.create({
     color: "#777",
     fontSize: 14,
     paddingVertical: 18,
+  },
+
+  // =========================================================
+  // REMARKS
+  // =========================================================
+
+  remarksContainer: {
+    marginTop: 12,
+  },
+
+  remarksLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#374151",
+    marginBottom: 6,
+  },
+
+  remarksInput: {
+    minHeight: 46,
+    maxHeight: 90,
+    borderWidth: 1,
+    borderColor: "#D9DEE7",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: "#111827",
+    textAlignVertical: "top",
   },
 
   // =========================================================
