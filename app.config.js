@@ -3,7 +3,7 @@ export default {
         name: "HT-ontrack",
         slug: "myapp",
         version: "1.0.0",
-        orientation: "portrait",
+        orientation: "default",
         icon: "./assets/images/logo.png",
         scheme: "myapp",
         userInterfaceStyle: "automatic",
@@ -23,8 +23,6 @@ export default {
                     "Allow app to track your location.",
                 NSLocationAlwaysUsageDescription:
                     "Allow app to track your location.",
-                NSMicrophoneUsageDescription:
-                    "Allow microphone access to record voice notes.",
             },
         },
 
@@ -33,7 +31,6 @@ export default {
                 "ACCESS_FINE_LOCATION",
                 "ACCESS_COARSE_LOCATION",
                 "android.permission.ACCESS_BACKGROUND_LOCATION",
-                "RECORD_AUDIO",
                 "android.permission.FOREGROUND_SERVICE",
                 "android.permission.FOREGROUND_SERVICE_LOCATION",
             ],
@@ -68,6 +65,16 @@ export default {
             "expo-router",
 
             [
+                "expo-build-properties",
+                {
+                    android: {
+                        enableMinifyInReleaseBuilds: true,
+                        enableShrinkResourcesInReleaseBuilds: true,
+                    },
+                },
+            ],
+
+            [
                 "expo-location",
                 {
                     locationWhenInUsePermission:
@@ -97,6 +104,7 @@ export default {
             typedRoutes: true,
             reactCompiler: true,
         },
+
         extra: {
             router: {},
             eas: {
@@ -104,4 +112,4 @@ export default {
             },
         },
     },
-}; 
+};
