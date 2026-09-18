@@ -1,3 +1,24 @@
+import { withAndroidManifest } from "expo/config-plugins.js";
+
+const withLargeScreenBarcodeScanner = (config) =>
+    withAndroidManifest(config, (manifestConfig) => {
+        const applications = manifestConfig.modResults.manifest.application;
+        const activities = applications?.flatMap(
+            (application) => application.activity ?? [],
+        );
+
+        activities?.forEach((activity) => {
+            if (
+                activity.$?.["android:name"] ===
+                "com.google.mlkit.vision.codescanner.internal.GmsBarcodeScanningDelegateActivity"
+            ) {
+                delete activity.$["android:screenOrientation"];
+            }
+        });
+
+        return manifestConfig;
+    });
+
 export default {
     expo: {
         name: "HT-ontrack",
@@ -63,6 +84,8 @@ export default {
 
         plugins: [
             "expo-router",
+            "expo-camera",
+            withLargeScreenBarcodeScanner,
 
             [
                 "expo-build-properties",
