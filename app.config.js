@@ -2,19 +2,33 @@ import { withAndroidManifest } from "expo/config-plugins.js";
 
 const withLargeScreenBarcodeScanner = (config) =>
     withAndroidManifest(config, (manifestConfig) => {
-        const applications = manifestConfig.modResults.manifest.application;
+        const manifest = manifestConfig.modResults.manifest;
+        const applications = manifest.application;
         const activities = applications?.flatMap(
             (application) => application.activity ?? [],
         );
 
-        activities?.forEach((activity) => {
-            if (
+        const barcodeActivity = activities?.find(
+            (activity) =>
                 activity.$?.["android:name"] ===
-                "com.google.mlkit.vision.codescanner.internal.GmsBarcodeScanningDelegateActivity"
-            ) {
-                delete activity.$["android:screenOrientation"];
-            }
-        });
+                "com.google.mlkit.vision.codescanner.internal.GmsBarcodeScanningDelegateActivity",
+        );
+
+        if (barcodeActivity) {
+            delete barcodeActivity.$["android:screenOrientation"];
+        } else if (applications?.[0]) {
+            manifest.$["xmlns:tools"] ??=
+                "http://schemas.android.com/tools";
+            applications[0].activity ??= [];
+            applications[0].activity.push({
+                $: {
+                    "android:name":
+                        "com.google.mlkit.vision.codescanner.internal.GmsBarcodeScanningDelegateActivity",
+                    "tools:node": "merge",
+                    "tools:remove": "android:screenOrientation",
+                },
+            });
+        }
 
         return manifestConfig;
     });
